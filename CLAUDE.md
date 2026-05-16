@@ -428,6 +428,25 @@ AIWolf NLP LLM Judgeプロジェクトは、最先端の言語モデルを使用
   - 既存の個別評価結果（`*_result.json`）からチーム集計のみを再生成
   - LLM APIを呼び出さない高速・低コストな集計再生成を実現
 
+- **2026-05-16**: マルチプロバイダ対応・自動検出・キャッシュ・Batch API の大幅拡張
+  - プレイヤー数 / 人狼数をログから自動検出（`game.player_count` を廃止）
+  - 評価基準を `applicable_when` 条件式で適用可否を制御（9人戦の `team_play` 等に対応）
+  - LLMClient プロトコルを導入し、OpenAI / Anthropic / Gemini / Vertex AI / OpenAI互換ローカルを統合
+  - 複数モデル同時評価、`<output_root>/<timestamp>/<model_id>/` 構造、`run_metadata.json` を追加
+  - 試運転（dry-run）モードで本実行前にモデル疎通確認
+  - Prompt Caching（OpenAI自動 / Anthropic cache_control / Gemini CachedContent）
+  - Batch API モード（OpenAI / Anthropic / Gemini AI Studio / Vertex AI GCS）
+
+- **2026-05-16**: 大幅リファクタリング（P1+P2+P3、17件）
+  - P1: 並列処理 deadlock 対策（spawn context）、Vertex GCS リソースクリーンアップ、
+    cache lifecycle のリーク対策、ConfigurationError 伝播
+  - P2: `BatchProcessor` 672→504行に分解、`RunDirectory` / `TeamAggregationService` /
+    `GameContextBuilder` / `PromptRenderer` / `prompt_loader` を新設、
+    プロバイダ間で重複していた Jinja2 レンダリングを統合、`BaseEvaluator` と
+    `LogFormattingService` を削除、`ProcessingConfig` への型付き設定移行
+  - P3: pytest 導入と単体テスト 39 本追加、cache lifecycle の context manager 化、
+    batch エラーハンドリング詳細化、`RunMetadata` Pydantic 化、循環インポート修正
+
 このシステムは、プロダクション対応可能な堅牢性と、将来のマイクロサービス化への明確で安全な拡張パスを提供しています。
 
 ## トラブルシューティング

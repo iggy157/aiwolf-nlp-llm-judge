@@ -313,38 +313,55 @@ kanolab,3.900000,3.400000
 
 ```
 src/
-├── cli.py                       # CLIインターフェース
-├── game/                        # ゲームドメイン（player_count等自動検出を含む）
-├── evaluation/                  # 評価ドメイン（基準・LLMレスポンス・集計）
-├── aiwolf_log/                  # ログCSV / JSON のパース
+├── cli.py                          # CLIインターフェース
+├── game/                           # ゲームドメイン（player_count / werewolf_count 自動検出を含む）
+├── evaluation/                     # 評価ドメイン（基準・LLMレスポンス・集計）
+├── aiwolf_log/                     # ログCSV / JSON のパース
 ├── llm/
-│   ├── client.py                # LLMClient プロトコル、ModelConfig、CacheHandle
-│   ├── batch.py                 # BatchClient プロトコル、BatchRequest/BatchResult
-│   ├── factory.py               # provider 文字列 → クライアント生成
-│   ├── evaluator.py             # 同期評価のラッパ
-│   ├── formatter.py             # ログ→LLM入力JSONLへの変換
+│   ├── client.py                   # LLMClient プロトコル、ModelConfig、CacheHandle
+│   ├── batch.py                    # BatchClient プロトコル、BatchRequest/BatchResult
+│   ├── factory.py                  # provider 文字列 → クライアント生成
+│   ├── evaluator.py                # 同期評価のラッパ
+│   ├── formatter.py                # ログ→LLM入力JSONLへの変換
+│   ├── prompt_loader.py            # prompts.yaml の読み込み
+│   ├── prompt_renderer.py          # 全プロバイダ共通の Jinja2 レンダリング
 │   └── providers/
-│       ├── openai_client.py     # OpenAI + OpenAI互換ローカルサーバ
-│       ├── openai_batch.py      # OpenAI Batch API
-│       ├── anthropic_client.py  # Claude（tool_use + cache_control）
-│       ├── anthropic_batch.py   # Anthropic Message Batches API
-│       ├── gemini_client.py     # Gemini AI Studio / Vertex AI（CachedContent）
-│       └── gemini_batch.py      # Gemini AI Studio inline / Vertex AI GCS Batch
-├── processor/                   # バッチ処理オーケストレーション
-│   ├── batch_processor.py       # 複数モデル + 複数ゲームの統括
-│   ├── batch_orchestrator.py    # Batch API モード時のオーケストレータ
-│   ├── game_processor.py        # 単一ゲーム処理（同期パス）
-│   ├── models/                  # ProcessingConfig 等
-│   └── pipeline/                # データ準備・評価実行・結果出力サービス
-└── utils/                       # 汎用ユーティリティ
+│       ├── openai_client.py        # OpenAI + OpenAI互換ローカルサーバ
+│       ├── openai_batch.py         # OpenAI Batch API
+│       ├── anthropic_client.py     # Claude（tool_use + cache_control）
+│       ├── anthropic_batch.py      # Anthropic Message Batches API
+│       ├── gemini_client.py        # Gemini AI Studio / Vertex AI（CachedContent）
+│       └── gemini_batch.py         # Gemini AI Studio inline / Vertex AI GCS Batch
+├── processor/                      # バッチ処理オーケストレーション
+│   ├── batch_processor.py          # 複数モデル + 複数ゲームの統括
+│   ├── batch_orchestrator.py       # Batch API モード時のオーケストレータ
+│   ├── game_processor.py           # 単一ゲーム処理（同期パス）
+│   ├── run_directory.py            # タイムスタンプ実行ディレクトリ + run_metadata.json
+│   ├── models/                     # ProcessingConfig 等
+│   └── pipeline/
+│       ├── data_preparation.py     # 評価設定読み込み / GameInfo検出
+│       ├── game_context.py         # GameContext + GameContextBuilder（同期/バッチ共有の前処理）
+│       ├── evaluation_execution.py # 評価基準の並列実行 + キャッシュライフサイクル
+│       ├── result_writing.py       # *_result.json の書き出し
+│       ├── aggregation_output.py   # team_aggregation.{json,csv} 出力
+│       └── team_aggregation.py     # チーム集計サービス
+└── utils/                          # 汎用ユーティリティ
+
+tests/                              # 単体テスト（pytest, 39件）
 ```
 
 ### テスト
 
 ```bash
+# テスト実行（dev依存をインストール後）
+uv sync
 uv run pytest
-uv run pytest --cov=src
+
+# 特定のテストモジュールだけ
+uv run pytest tests/test_processing_config.py
 ```
+
+新規プロバイダクライアントやサービスを追加する際は、対応するテストを `tests/` 配下に追加してください。
 
 ## ライセンス
 
