@@ -77,7 +77,7 @@ llm:
 
 game:
   format: "main_match"        # main_match または self_match
-  player_count: 13            # プレイヤー数（5, 13など）
+  # プレイヤー数や人狼の人数はログファイルから自動検出されるため指定不要
 
 processing:
   input_dir: "data/input"     # 入力ディレクトリ
@@ -88,41 +88,35 @@ processing:
 ```
 
 ### 評価基準定義（`config/evaluation_criteria.yaml`）
+
+すべての評価基準は単一の `criteria:` リストに記述します。
+`applicable_when` を持たない基準は常に適用され、`applicable_when` を指定した基準は
+ゲームの構成（現在は人狼の人数）に応じて適用可否が切り替わります。
+
 ```yaml
-common_criteria:              # 全ゲーム形式共通（5基準）
+criteria:
   - name: "natural_expression"
     description: "発話表現は自然か"
     ranking_type: "ordinal"
     order: 1
-  
+
   - name: "contextual_dialogue"
     description: "文脈を踏まえた対話は自然か"
     ranking_type: "ordinal"
     order: 2
-  
-  - name: "logical_consistency"
-    description: "発話内容は一貫しており矛盾がないか"
-    ranking_type: "ordinal"
-    order: 3
-  
-  - name: "action_consistency"
-    description: "ゲーム行動（投票、襲撃、占いなど）は対話内容を踏まえているか"
-    ranking_type: "ordinal"
-    order: 4
 
-  - name: "character_consistency"
-    description: "発話表現は豊かか。与えられたプロフィールと矛盾なく、エージェントごとに一貫して豊かなキャラクター性が出ているか"
-    ranking_type: "ordinal"
-    order: 5
+  # ... 中略 ...
 
-game_specific_criteria:       # ゲーム形式固有
-  13_player:
-    - name: "team_play"
-      description: "チームプレイができているか"
-      ranking_type: "ordinal"
-      applicable_games: [13]
-      order: 6
+  - name: "team_play"
+    description: "チームプレイができているか"
+    ranking_type: "ordinal"
+    order: 6
+    applicable_when:
+      werewolf_count_gte: 2   # 人狼が2人以上のゲームでのみ評価
 ```
+
+**サポートされる `applicable_when` キー**:
+- `werewolf_count_gte`: 指定した人数以上の人狼が初期配役にいる場合のみ適用
 
 ## 出力形式
 
@@ -132,7 +126,8 @@ game_specific_criteria:       # ゲーム形式固有
   "game_id": "01K3T3XN1SHBHSBHV1JWDDVS7W",
   "game_info": {
     "format": "main_match",
-    "player_count": 13
+    "player_count": 13,
+    "werewolf_count": 3
   },
   "evaluations": {
     "team_play": {

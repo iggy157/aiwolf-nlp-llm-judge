@@ -81,13 +81,13 @@ class EvaluationExecutionService:
         Raises:
             EvaluationExecutionError: 評価実行に失敗した場合
         """
-        criteria_for_game = evaluation_config.get_criteria_for_game(
-            game_info.player_count
-        )
+        criteria_for_game = evaluation_config.get_criteria_for_game(game_info)
 
         if not criteria_for_game:
             logger.warning(
-                f"No evaluation criteria found for {game_info.player_count} players"
+                f"No evaluation criteria found for game "
+                f"(players={game_info.player_count}, "
+                f"werewolves={game_info.werewolf_count})"
             )
             return EvaluationResult()
 

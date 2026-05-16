@@ -1,9 +1,12 @@
 import csv
 from pathlib import Path
 
-from src.aiwolf_log.parser import AIWolfCSVParser
-from src.game.models import GameInfo
+from src.aiwolf_log.csv_schema import ActionTypes, CSVColumnIndices
 from src.evaluation.loaders.settings_loader import SettingsLoader
+from src.game.models import GameInfo
+
+
+WEREWOLF_ROLE = "WEREWOLF"
 
 
 class GameDetector:
@@ -12,6 +15,10 @@ class GameDetector:
     @staticmethod
     def detect_game_format(csv_path: Path, settings_path: Path) -> GameInfo:
         """CSVファイルからゲーム形式を検出.
+
+        プレイヤー数と人狼の人数はDay 0のstatus行から自動検出する。
+        ゲーム形式（main_match/self_match）はログから判別できないため
+        settings.yamlから読み込む。
 
         Args:
             csv_path: CSVファイルのパス
@@ -27,46 +34,55 @@ class GameDetector:
         if not csv_path.exists():
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
 
-        # 設定ファイルからプレイヤー数とゲーム形式を読み込み
-        player_count = SettingsLoader.load_player_count(settings_path)
         game_format = SettingsLoader.load_game_format(settings_path)
+        player_count, werewolf_count = GameDetector._count_roles_from_initial_status(
+            csv_path
+        )
 
         return GameInfo(
             game_format=game_format,
             player_count=player_count,
+            werewolf_count=werewolf_count,
             game_id=csv_path.stem,
         )
 
     @staticmethod
-    def _extract_player_indices(csv_path: Path) -> set[str]:
-        """CSVファイルからプレイヤーインデックスを抽出.
+    def _count_roles_from_initial_status(csv_path: Path) -> tuple[int, int]:
+        """Day 0のstatus行を集計してプレイヤー数と人狼数を返す.
 
         Args:
             csv_path: CSVファイルのパス
 
         Returns:
-            set[str]: プレイヤーインデックスのセット
+            (player_count, werewolf_count)
+
+        Raises:
+            ValueError: status行が見つからない場合、もしくは読み込みに失敗した場合
         """
-        player_indices = set()
-        parser = AIWolfCSVParser()
+        player_count = 0
+        werewolf_count = 0
 
         try:
             with csv_path.open("r", encoding="utf-8") as f:
-                csv_reader = csv.reader(f)
-
-                for row in csv_reader:
-                    try:
-                        # パーサーを使用して会話行動かどうかを判定
-                        if parser._is_conversation_action(row):
-                            # パーサーを使用して発話者インデックスを取得
-                            player_index = parser.get_speaker_index(row)
-                            if player_index:  # 空文字でない場合のみ追加
-                                player_indices.add(player_index)
-                    except (TypeError, ValueError):
-                        # パーサーで処理できない行はスキップ
+                for row in csv.reader(f):
+                    if len(row) <= CSVColumnIndices.ACTION:
+                        continue
+                    if row[CSVColumnIndices.DAY] != "0":
+                        continue
+                    if row[CSVColumnIndices.ACTION].lower() != ActionTypes.STATUS:
                         continue
 
-        except Exception as e:
-            raise ValueError(f"Failed to read CSV file: {e}")
+                    player_count += 1
+                    role_index = CSVColumnIndices.StatusAction.ROLE
+                    if len(row) > role_index and row[role_index] == WEREWOLF_ROLE:
+                        werewolf_count += 1
+        except OSError as e:
+            raise ValueError(f"Failed to read CSV file: {e}") from e
 
-        return player_indices
+        if player_count == 0:
+            raise ValueError(
+                f"No initial (day 0) status rows found in {csv_path}; "
+                "cannot determine player count"
+            )
+
+        return player_count, werewolf_count

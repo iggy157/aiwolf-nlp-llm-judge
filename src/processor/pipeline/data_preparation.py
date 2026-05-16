@@ -79,7 +79,8 @@ class DataPreparationService:
             )
             logger.debug(
                 f"Detected game - format: {game_info.game_format.value}, "
-                f"players: {game_info.player_count}"
+                f"players: {game_info.player_count}, "
+                f"werewolves: {game_info.werewolf_count}"
             )
             return game_info
         except Exception as e:

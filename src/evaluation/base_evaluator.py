@@ -55,18 +55,18 @@ class BaseEvaluator(ABC):
     def _validate_responses(
         self,
         responses: dict[str, EvaluationLLMResponse],
-        player_count: int,
+        game_info: GameInfo,
     ) -> None:
         """評価レスポンスの妥当性をチェック.
 
         Args:
             responses: 評価レスポンス辞書
-            player_count: プレイヤー数
+            game_info: ゲーム情報
 
         Raises:
             ValueError: 評価レスポンスが不正な場合
         """
-        expected_criteria = self.config.get_criteria_for_game(player_count)
+        expected_criteria = self.config.get_criteria_for_game(game_info)
         expected_names = {c.name for c in expected_criteria}
 
         # 不足している基準をチェック

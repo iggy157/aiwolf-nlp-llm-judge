@@ -68,6 +68,7 @@ class ResultWritingService:
             "game_info": {
                 "format": game_info.game_format.value,
                 "player_count": game_info.player_count,
+                "werewolf_count": game_info.werewolf_count,
             },
             "evaluations": {},
         }

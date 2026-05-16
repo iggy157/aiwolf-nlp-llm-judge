@@ -2,9 +2,9 @@
 
 from src.evaluation.base_evaluator import BaseEvaluator
 from src.evaluation.models import (
+    ApplicableWhen,
     EvaluationCriteria,
     RankingType,
-    CriteriaCategory,
     EvaluationResult,
     EvaluationConfig,
     EvaluationElement,
@@ -13,9 +13,9 @@ from src.evaluation.models import (
 
 __all__ = [
     "BaseEvaluator",
+    "ApplicableWhen",
     "EvaluationCriteria",
     "RankingType",
-    "CriteriaCategory",
     "EvaluationResult",
     "EvaluationConfig",
     "EvaluationElement",

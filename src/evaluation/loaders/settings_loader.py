@@ -10,30 +10,6 @@ class SettingsLoader:
     """settings.yamlファイルの読み込み専用クラス."""
 
     @staticmethod
-    def load_player_count(settings_path: Path) -> int:
-        """settings.yamlからプレイヤー数を読み込む
-
-        Args:
-            settings_path: settings.yamlファイルのパス
-
-        Returns:
-            読み込まれたプレイヤー数
-
-        Raises:
-            FileNotFoundError: 設定ファイルが見つからない場合
-            ValueError: 設定ファイルの形式が不正な場合
-        """
-        settings_data = YAMLLoader.load_yaml(settings_path)
-
-        # プレイヤー数設定を取得
-        player_count = settings_data.get("game", {}).get("player_count", 5)
-
-        if not isinstance(player_count, int) or player_count <= 0:
-            raise ValueError(f"Invalid player count: {player_count}")
-
-        return player_count
-
-    @staticmethod
     def load_game_format(settings_path: Path) -> GameFormat:
         """settings.yamlからゲーム形式設定を読み込む
 

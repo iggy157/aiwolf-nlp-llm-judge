@@ -1,7 +1,7 @@
 from src.evaluation.models.criteria import (
+    ApplicableWhen,
     EvaluationCriteria,
     RankingType,
-    CriteriaCategory,
 )
 from src.evaluation.models.result import (
     EvaluationResult,
@@ -13,9 +13,9 @@ from src.evaluation.models.llm_response import (
 )
 
 __all__ = [
+    "ApplicableWhen",
     "EvaluationCriteria",
     "RankingType",
-    "CriteriaCategory",
     "EvaluationResult",
     "EvaluationConfig",
     "EvaluationElement",

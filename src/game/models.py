@@ -15,6 +15,7 @@ class GameInfo:
 
     game_format: GameFormat
     player_count: int
+    werewolf_count: int
     game_id: str = ""
 
 

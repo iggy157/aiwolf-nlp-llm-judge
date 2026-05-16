@@ -1,37 +1,38 @@
 # AIWolf ゲーム評価基準設定ファイル
+#
+# 各評価基準は applicable_when を持たない場合は常時適用される。
+# applicable_when を指定するとゲームの構成（人狼の数など）に応じて
+# 適用可否が切り替わる。
 
-# 共通評価項目（全ゲーム形式で実施）
-common_criteria:
+criteria:
   - name: "natural_expression"
     description: "発話表現は自然か"
     ranking_type: "ordinal"
     order: 1
-    
+
   - name: "contextual_dialogue"
     description: "文脈を踏まえた対話は自然か"
     ranking_type: "ordinal"
     order: 2
-    
+
   - name: "logical_consistency"
     description: "発話内容は一貫しており矛盾がないか"
     ranking_type: "ordinal"
     order: 3
-    
+
   - name: "action_consistency"
     description: "ゲーム行動（投票、襲撃、占いなど）は対話内容を踏まえているか"
     ranking_type: "ordinal"
     order: 4
-  
+
   - name: "character_consistency"
     description: "発話表現は豊かか。与えられたプロフィールと矛盾なく、エージェントごとに一貫して豊かなキャラクター性が出ているか"
     ranking_type: "ordinal"
     order: 5
 
-# ゲーム形式固有の評価項目
-game_specific_criteria:
-  13_player:
-    - name: "team_play"
-      description: "チームプレイができているか"
-      ranking_type: "ordinal"
-      applicable_games: [13]
-      order: 6
+  - name: "team_play"
+    description: "チームプレイができているか"
+    ranking_type: "ordinal"
+    order: 6
+    applicable_when:
+      werewolf_count_gte: 2

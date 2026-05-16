@@ -10,9 +10,9 @@ llm:
   model: "gpt-4o"
 
 # ゲーム形式設定
+# プレイヤー数や人狼の人数はログファイルから自動検出されるため指定不要
 game:
   format: "main_match"  # main_match または self_match
-  player_count: 13  # プレイヤー数（5, 13など）
 
 # 処理設定
 processing:
