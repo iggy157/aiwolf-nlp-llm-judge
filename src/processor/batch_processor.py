@@ -1,16 +1,12 @@
 """バッチ処理を管理するクラス（複数モデル対応）."""
 
-import json
 import logging
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from src.aiwolf_log import AIWolfGameLog
-from src.evaluation.models.result import TeamAggregator
 from src.llm.client import ModelConfig
 from src.utils.game_log_finder import find_all_game_logs
 
@@ -18,6 +14,11 @@ from .game_processor import GameProcessor
 from .models import ProcessingConfig, ProcessingResult
 from .models.exceptions import ConfigurationError
 from .pipeline.aggregation_output import AggregationOutputService
+from .pipeline.team_aggregation import (
+    TeamAggregationService,
+    build_criteria_mappings,
+)
+from .run_directory import RunDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,6 @@ class _DryRunOutcome:
 
 class BatchProcessor:
     """複数モデル × 複数ゲームのバッチ処理を統括."""
-
-    RUN_DIR_TS_FORMAT = "%Y-%m-%d_%H-%M-%S"
-    RUN_METADATA_FILENAME = "run_metadata.json"
 
     def __init__(
         self,
@@ -57,6 +55,28 @@ class BatchProcessor:
             raise ConfigurationError("No models configured after filtering")
 
         self.aggregation_output = AggregationOutputService()
+        # 集計用 criteria_mappings は実行毎に1回だけロードする（旧実装ではモデル毎に再パースしていた）
+        self._aggregation_service = TeamAggregationService(
+            criteria_mappings=self._load_criteria_mappings(),
+            output_service=self.aggregation_output,
+        )
+
+    def _load_criteria_mappings(self) -> dict:
+        """評価基準ファイルから criteria_mappings を構築（init で1回だけ呼ぶ）."""
+        from src.processor.pipeline import DataPreparationService
+
+        config_with_settings = self.config.copy()
+        if "settings_path" not in config_with_settings:
+            criteria_path = Path(
+                self.config.get("path", {}).get(
+                    "evaluation_criteria", "config/evaluation_criteria.yaml"
+                )
+            )
+            settings_path = criteria_path.parent / "settings.yaml"
+            config_with_settings["settings_path"] = str(settings_path)
+
+        data_prep_service = DataPreparationService(config_with_settings)
+        return build_criteria_mappings(data_prep_service.load_evaluation_config())
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -81,7 +101,7 @@ class BatchProcessor:
             logger.warning("No game logs found")
             return ProcessingResult()
 
-        run_dir = self._create_run_directory()
+        run_dir = RunDirectory.create(self.processing_config.output_root)
         logger.info(f"Run directory: {run_dir}")
 
         # 試運転
@@ -125,22 +145,24 @@ class BatchProcessor:
                      None の場合は output_root 直下で最新の timestamp ディレクトリを使う。
         """
         if run_dir is None:
-            run_dir = self._latest_run_dir()
-            if run_dir is None:
+            latest = RunDirectory.latest_under(self.processing_config.output_root)
+            if latest is None:
                 logger.error(
                     f"No timestamped run directory found under "
                     f"{self.processing_config.output_root}"
                 )
                 return
-            logger.info(f"Using latest run directory: {run_dir}")
+            run_dir_obj = latest
+            logger.info(f"Using latest run directory: {run_dir_obj}")
+        else:
+            if not run_dir.is_dir():
+                logger.error(f"Run directory does not exist: {run_dir}")
+                return
+            run_dir_obj = RunDirectory(run_dir)
 
-        if not run_dir.is_dir():
-            logger.error(f"Run directory does not exist: {run_dir}")
-            return
-
-        model_dirs = [p for p in run_dir.iterdir() if p.is_dir()]
+        model_dirs = run_dir_obj.iter_model_dirs()
         if not model_dirs:
-            logger.warning(f"No model subdirectories found in {run_dir}")
+            logger.warning(f"No model subdirectories found in {run_dir_obj}")
             return
 
         for model_dir in model_dirs:
@@ -156,45 +178,24 @@ class BatchProcessor:
         logger.info(f"Found {len(game_logs)} game logs")
         return game_logs
 
-    def _create_run_directory(self) -> Path:
-        timestamp = datetime.now().strftime(self.RUN_DIR_TS_FORMAT)
-        run_dir = self.processing_config.output_root / timestamp
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
-
-    def _latest_run_dir(self) -> Path | None:
-        root = self.processing_config.output_root
-        if not root.is_dir():
-            return None
-        timestamp_dirs = sorted(
-            (p for p in root.iterdir() if p.is_dir()),
-            key=lambda p: p.name,
-        )
-        return timestamp_dirs[-1] if timestamp_dirs else None
-
     def _write_run_metadata(
         self,
-        run_dir: Path,
+        run_dir: RunDirectory,
         game_logs: list[AIWolfGameLog],
         eligible_models: list[ModelConfig],
         executed_model_ids: list[str],
     ) -> None:
-        metadata = {
-            "run_timestamp": run_dir.name,
-            "input_dir": str(self.processing_config.input_dir),
-            "game_count": len(game_logs),
-            "game_ids": [gl.game_id for gl in game_logs],
-            "models": [asdict(m) for m in self.processing_config.models],
-            "eligible_models": [m.id for m in eligible_models],
-            "executed_models": executed_model_ids,
-            "parallel_models": self.processing_config.parallel_models,
-            "dry_run": self.processing_config.dry_run,
-            "dry_run_strict": self.processing_config.dry_run_strict,
-        }
-        metadata_path = run_dir / self.RUN_METADATA_FILENAME
-        with metadata_path.open("w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        logger.info(f"Run metadata saved: {metadata_path}")
+        run_dir.write_metadata(
+            input_dir=self.processing_config.input_dir,
+            game_logs=game_logs,
+            configured_models=self.processing_config.models,
+            eligible_models=eligible_models,
+            executed_model_ids=executed_model_ids,
+            parallel_models=self.processing_config.parallel_models,
+            dry_run=self.processing_config.dry_run,
+            dry_run_strict=self.processing_config.dry_run_strict,
+            use_batch_api=self.processing_config.use_batch_api,
+        )
 
     def _log_processing_summary(self, result: ProcessingResult) -> None:
         logger.info(
@@ -293,7 +294,7 @@ class BatchProcessor:
         self,
         models: list[ModelConfig],
         game_logs: list[AIWolfGameLog],
-        run_dir: Path,
+        run_dir: RunDirectory,
     ) -> dict[str, ProcessingResult]:
         """全モデルを実行し、モデルID -> ProcessingResult の辞書を返す."""
         if self.processing_config.parallel_models and len(models) > 1:
@@ -304,7 +305,7 @@ class BatchProcessor:
         self,
         models: list[ModelConfig],
         game_logs: list[AIWolfGameLog],
-        run_dir: Path,
+        run_dir: RunDirectory,
     ) -> dict[str, ProcessingResult]:
         results: dict[str, ProcessingResult] = {}
         for model_config in models:
@@ -317,7 +318,7 @@ class BatchProcessor:
         self,
         models: list[ModelConfig],
         game_logs: list[AIWolfGameLog],
-        run_dir: Path,
+        run_dir: RunDirectory,
     ) -> dict[str, ProcessingResult]:
         results: dict[str, ProcessingResult] = {}
         with ThreadPoolExecutor(max_workers=len(models)) as pool:
@@ -345,11 +346,10 @@ class BatchProcessor:
         self,
         model_config: ModelConfig,
         game_logs: list[AIWolfGameLog],
-        run_dir: Path,
+        run_dir: RunDirectory,
     ) -> ProcessingResult:
         logger.info(f"=== Running model '{model_config.id}' ===")
-        model_output_dir = run_dir / model_config.id
-        model_output_dir.mkdir(parents=True, exist_ok=True)
+        model_output_dir = run_dir.model_dir(model_config.id)
 
         if self.processing_config.use_batch_api:
             result = self._run_one_model_batch(
@@ -496,190 +496,9 @@ class BatchProcessor:
         evaluation_results: list[dict],
         model_output_dir: Path,
     ) -> None:
-        logger.info(f"[{model_config.id}] Generating team aggregation")
-        try:
-            criteria_mappings = self._load_evaluation_criteria_mappings()
-            aggregation_data = self._create_team_aggregation_data(
-                evaluation_results, criteria_mappings
-            )
-            self.aggregation_output.save_both(aggregation_data, model_output_dir)
-        except Exception as e:
-            logger.error(
-                f"[{model_config.id}] Failed to generate team aggregation: {e}",
-                exc_info=True,
-            )
+        self._aggregation_service.generate_and_save(
+            evaluation_results, model_output_dir, model_id=model_config.id
+        )
 
     def _regenerate_aggregation_for_model_dir(self, model_dir: Path) -> None:
-        result_files = list(model_dir.glob("*_result.json"))
-        if not result_files:
-            logger.warning(f"No *_result.json found in {model_dir}; skipping")
-            return
-
-        logger.info(
-            f"[{model_dir.name}] Found {len(result_files)} evaluation result files"
-        )
-
-        evaluation_results: list[dict] = []
-        for result_file in result_files:
-            try:
-                with result_file.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if "evaluations" in data:
-                    evaluation_results.append(data["evaluations"])
-                else:
-                    logger.warning(
-                        f"No 'evaluations' field in {result_file.name}; skipping"
-                    )
-            except Exception as e:
-                logger.error(f"Failed to load {result_file.name}: {e}")
-
-        if not evaluation_results:
-            logger.error(f"[{model_dir.name}] No valid evaluation results loaded")
-            return
-
-        try:
-            criteria_mappings = self._load_evaluation_criteria_mappings()
-            aggregation_data = self._create_team_aggregation_data(
-                evaluation_results, criteria_mappings
-            )
-            self.aggregation_output.save_both(aggregation_data, model_dir)
-            logger.info(f"[{model_dir.name}] Team aggregation regenerated")
-        except Exception as e:
-            logger.error(
-                f"[{model_dir.name}] Failed to regenerate aggregation: {e}",
-                exc_info=True,
-            )
-
-    def _load_evaluation_criteria_mappings(self) -> dict[str, dict[str, Any]]:
-        from src.processor.pipeline import DataPreparationService
-
-        config_with_settings = self.config.copy()
-        if "settings_path" not in config_with_settings:
-            criteria_path = Path(
-                self.config.get("path", {}).get(
-                    "evaluation_criteria", "config/evaluation_criteria.yaml"
-                )
-            )
-            settings_path = criteria_path.parent / "settings.yaml"
-            config_with_settings["settings_path"] = str(settings_path)
-
-        data_prep_service = DataPreparationService(config_with_settings)
-        evaluation_config = data_prep_service.load_evaluation_config()
-
-        return {
-            "criteria_name_to_description": {
-                criteria.name: criteria.description for criteria in evaluation_config
-            },
-            "criteria_name_to_order": {
-                criteria.name: criteria.order for criteria in evaluation_config
-            },
-        }
-
-    def _create_team_aggregation_data(
-        self,
-        evaluation_results: list[dict],
-        criteria_mappings: dict[str, dict[str, Any]],
-    ) -> dict[str, Any]:
-        aggregator = TeamAggregator()
-
-        for evaluation_dict in evaluation_results:
-            evaluation_result = self._convert_dict_to_evaluation_result(evaluation_dict)
-            aggregator.add_game_result(evaluation_result)
-
-        team_averages = aggregator.calculate_team_averages()
-        team_counts = aggregator.get_team_count_by_criteria()
-
-        team_averages_with_descriptions = self._convert_criteria_names_to_descriptions(
-            team_averages, criteria_mappings
-        )
-        team_counts_with_descriptions = self._convert_criteria_names_to_descriptions(
-            team_counts, criteria_mappings
-        )
-
-        criteria_evaluated = self._create_sorted_criteria_list(
-            team_averages_with_descriptions, criteria_mappings
-        )
-
-        return {
-            "team_averages": team_averages_with_descriptions,
-            "team_sample_counts": team_counts_with_descriptions,
-            "summary": {
-                "total_games_processed": len(evaluation_results),
-                "teams_found": list(team_averages_with_descriptions.keys()),
-                "criteria_evaluated": criteria_evaluated,
-            },
-        }
-
-    def _convert_criteria_names_to_descriptions(
-        self,
-        data: dict[str, dict[str, Any]],
-        criteria_mappings: dict[str, dict[str, Any]],
-    ) -> dict[str, dict[str, Any]]:
-        criteria_name_to_description = criteria_mappings["criteria_name_to_description"]
-        criteria_name_to_order = criteria_mappings["criteria_name_to_order"]
-
-        converted: dict[str, dict[str, Any]] = {}
-        for team, criteria_dict in data.items():
-            sorted_criteria = sorted(
-                criteria_dict.items(),
-                key=lambda x: criteria_name_to_order.get(x[0], 999),
-            )
-            converted[team] = {}
-            for criteria_name, value in sorted_criteria:
-                description = criteria_name_to_description.get(
-                    criteria_name, criteria_name
-                )
-                converted[team][description] = value
-        return converted
-
-    def _create_sorted_criteria_list(
-        self,
-        team_averages_with_descriptions: dict[str, dict[str, Any]],
-        criteria_mappings: dict[str, dict[str, Any]],
-    ) -> list[str]:
-        if not team_averages_with_descriptions:
-            return []
-
-        criteria_name_to_description = criteria_mappings["criteria_name_to_description"]
-        criteria_name_to_order = criteria_mappings["criteria_name_to_order"]
-
-        first_team_criteria = next(iter(team_averages_with_descriptions.values()), {})
-
-        description_to_criteria_name = {
-            v: k for k, v in criteria_name_to_description.items()
-        }
-        criteria_with_order = []
-        for description in first_team_criteria.keys():
-            criteria_name = description_to_criteria_name.get(description, description)
-            order = criteria_name_to_order.get(criteria_name, 999)
-            criteria_with_order.append((order, description))
-
-        return [desc for _, desc in sorted(criteria_with_order)]
-
-    def _convert_dict_to_evaluation_result(self, evaluation_dict: dict):
-        from src.evaluation.models.result import (
-            CriteriaEvaluationResult,
-            EvaluationResult,
-            EvaluationResultElement,
-        )
-
-        evaluation_result = EvaluationResult()
-        evaluations_data = evaluation_dict.get("evaluations", evaluation_dict)
-
-        for criteria_name, criteria_data in evaluations_data.items():
-            elements = []
-            for ranking_data in criteria_data.get("rankings", []):
-                element = EvaluationResultElement(
-                    player_name=ranking_data["player_name"],
-                    reasoning=ranking_data["reasoning"],
-                    ranking=ranking_data["ranking"],
-                    team=ranking_data["team"],
-                )
-                elements.append(element)
-
-            criteria_result = CriteriaEvaluationResult(
-                criteria_name=criteria_name, elements=elements
-            )
-            evaluation_result.append(criteria_result)
-
-        return evaluation_result
+        self._aggregation_service.regenerate_for_model_dir(model_dir)

@@ -1,4 +1,4 @@
-"""単一ゲームの処理を担当するクラス（リファクタリング後）."""
+"""単一ゲームの処理を担当するクラス."""
 
 import logging
 from pathlib import Path
@@ -7,29 +7,26 @@ from typing import Any
 from src.aiwolf_log.game_log import AIWolfGameLog
 from src.llm.client import ModelConfig
 
+from .models.config import ProcessingConfig
 from .pipeline import (
     DataPreparationService,
     EvaluationExecutionService,
-    LogFormattingService,
     ResultWritingService,
 )
+from .pipeline.game_context import GameContextBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class GameProcessor:
-    """単一ゲームの処理を担当するクラス（リファクタリング後）
-
-    このクラスは、各サービスを組み合わせてゲームログの評価処理を
-    オーケストレートする責任を持ちます。
+    """単一ゲームの処理を担当するクラス.
 
     責任:
-    - 処理フローの管理
-    - サービス間の調整
-    - エラーハンドリング
+    - GameContext 構築（前処理）
+    - 評価実行サービスの起動
+    - 結果保存
     """
 
-    # クラス定数
     SUCCESS_INDICATOR = "✓"
     FAILURE_INDICATOR = "✗"
 
@@ -37,7 +34,7 @@ class GameProcessor:
         """GameProcessorを初期化
 
         Args:
-            config: アプリケーション設定辞書
+            config: アプリケーション設定辞書（path.env / llm.prompt_yml / processing.encoding 等の plumbing）
             model_config: 使用するLLMモデルの設定
 
         Raises:
@@ -46,15 +43,18 @@ class GameProcessor:
         self.config = config
         self.model_config = model_config
 
-        # 各サービスを初期化
+        self.processing_config = ProcessingConfig.from_config_dict(config)
         self.data_prep_service = DataPreparationService(config)
-        self.log_formatting_service = LogFormattingService(config)
         self.result_service = ResultWritingService()
 
-        # 評価用スレッド数を取得して評価サービスを初期化
-        max_threads = self.data_prep_service.get_evaluation_workers()
         self.evaluation_service = EvaluationExecutionService(
-            config, model_config, max_threads
+            config, model_config, self.processing_config
+        )
+
+        self.context_builder = GameContextBuilder(
+            settings_path=self.data_prep_service.settings_path,
+            evaluation_config=self.data_prep_service.load_evaluation_config(),
+            reader_config=config,
         )
 
     def process(
@@ -78,39 +78,23 @@ class GameProcessor:
                 f"[{self.model_config.id}] Processing game: {game_log.game_id}"
             )
 
-            # 1. 設定とゲーム情報の準備
-            evaluation_config = self.data_prep_service.load_evaluation_config()
-            game_info = self.data_prep_service.detect_game_info(game_log)
+            ctx = self.context_builder.build(game_log)
 
-            # 2. ログデータのフォーマット変換
-            formatted_data = self.log_formatting_service.format_game_log(
-                game_log, game_info
-            )
-
-            # 3. キャラクター情報の取得
-            character_info = self.log_formatting_service.get_character_info(game_log)
-
-            # 4. チームマッピングの取得
-            agent_to_team_mapping = game_log.get_agent_to_team_mapping()
-
-            # 5. 評価実行（マルチスレッド）
             evaluation_result = self.evaluation_service.execute_evaluations(
-                evaluation_config,
-                game_info,
-                formatted_data,
-                character_info,
-                agent_to_team_mapping,
+                ctx.game_info,
+                ctx.criteria,
+                ctx.formatted_data,
+                ctx.character_info,
+                ctx.agent_to_team_mapping,
             )
 
-            # 6. 結果保存（試運転時はスキップ）
             if persist:
                 if output_dir is None:
                     raise ValueError("output_dir is required when persist=True")
                 self.result_service.save_results(
-                    game_log, game_info, evaluation_result, output_dir
+                    game_log, ctx.game_info, evaluation_result, output_dir
                 )
 
-            # 7. 評価結果を辞書形式に変換
             evaluation_dict = evaluation_result.to_dict()
 
             logger.info(

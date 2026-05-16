@@ -19,6 +19,13 @@ from google.genai import types
 from pydantic import BaseModel
 
 from src.llm.client import CacheHandle, ModelConfig, PromptTemplates
+from src.llm.prompt_renderer import (
+    EVALUATION_BLOCK_HEADER,
+    LOG_BLOCK_HEADER,
+    render_system,
+    render_user,
+    split_user_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +68,10 @@ class GeminiClient:
         self, character_info: str, templates: PromptTemplates
     ) -> CacheHandle | None:
         """system + character_info を CachedContent リソースとして保存."""
-        from jinja2 import Template
-
-        system_text = Template(templates.system).render().strip()
-        # 評価基準とログを抜いた prefix の content を組む
-        prefix_text = (
-            Template(templates.user)
-            .render(
-                character_info=character_info,
-                criteria_description="",
-                log="",
-            )
-            .rstrip()
+        system_text = render_system(templates)
+        # 評価基準とログを抜いた prefix の content を組む（split_user_prompt の prefix 側）
+        prefix_text, _ = split_user_prompt(
+            templates, character_info, "", ""
         )
 
         try:
@@ -139,13 +138,11 @@ class GeminiClient:
         cache_handle: CacheHandle | None = None,
     ) -> BaseModel:
         """Gemini を response_schema 強制で呼び出して構造化レスポンスを返す."""
-        from jinja2 import Template
-
         if cache_handle is not None and cache_handle.resource_name:
             # キャッシュ使用時は prefix を送らず criteria+log のみ送る
             user_text = (
-                f"## 評価基準\n\n{criteria_description}\n\n"
-                f"## 評価対象のログ\n\n{log_json}"
+                f"{EVALUATION_BLOCK_HEADER}\n\n{criteria_description}\n\n"
+                f"{LOG_BLOCK_HEADER}\n\n{log_json}"
             )
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -153,15 +150,9 @@ class GeminiClient:
                 cached_content=cache_handle.resource_name,
             )
         else:
-            system_text = Template(templates.system).render().strip()
-            user_text = (
-                Template(templates.user)
-                .render(
-                    character_info=character_info,
-                    criteria_description=criteria_description,
-                    log=log_json,
-                )
-                .strip()
+            system_text = render_system(templates)
+            user_text = render_user(
+                templates, character_info, criteria_description, log_json
             )
             config = types.GenerateContentConfig(
                 system_instruction=system_text,

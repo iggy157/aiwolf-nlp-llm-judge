@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from src.llm.batch import BatchClient, BatchRequest, BatchResult
 from src.llm.client import ModelConfig, PromptTemplates
+from src.llm.prompt_renderer import render_system, render_user
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +106,7 @@ class OpenAIBatchClient(BatchClient):
         output_structure: type[BaseModel],
     ) -> bytes:
         """OpenAI Batch 用の JSONL を構築."""
-        from jinja2 import Template
-
-        system_text = Template(templates.system).render().strip()
+        system_text = render_system(templates)
         schema = output_structure.model_json_schema()
         response_format = {
             "type": "json_schema",
@@ -120,14 +119,8 @@ class OpenAIBatchClient(BatchClient):
 
         lines: list[bytes] = []
         for req in requests:
-            user_text = (
-                Template(templates.user)
-                .render(
-                    character_info=req.character_info,
-                    criteria_description=req.criteria_description,
-                    log=req.log_json,
-                )
-                .strip()
+            user_text = render_user(
+                templates, req.character_info, req.criteria_description, req.log_json
             )
             body = {
                 "model": self.model_config.model,

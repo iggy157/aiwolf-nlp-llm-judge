@@ -21,10 +21,7 @@ class DataPreparationService:
     責任:
     - 評価設定の読み込み
     - ゲーム情報の検出
-    - 設定からスレッド数の取得
     """
-
-    DEFAULT_EVALUATION_WORKERS = 8
 
     def __init__(self, config: dict[str, Any]) -> None:
         """初期化
@@ -86,37 +83,3 @@ class DataPreparationService:
         except Exception as e:
             raise GameLogProcessingError(f"Failed to detect game info: {e}") from e
 
-    def get_evaluation_workers(self) -> int:
-        """設定から評価用スレッド数を読み込み
-
-        Returns:
-            評価用スレッド数（デフォルト: DEFAULT_EVALUATION_WORKERS）
-
-        Raises:
-            ConfigurationError: 設定読み込みに失敗した場合
-        """
-        try:
-            from src.utils.yaml_loader import YAMLLoader
-
-            config_data = YAMLLoader.load_yaml(self.settings_path)
-            evaluation_workers = config_data.get("processing", {}).get(
-                "evaluation_workers", self.DEFAULT_EVALUATION_WORKERS
-            )
-
-            # 値の妥当性チェック
-            if not isinstance(evaluation_workers, int) or evaluation_workers < 1:
-                logger.warning(
-                    f"Invalid evaluation_workers value: {evaluation_workers}, "
-                    f"using default: {self.DEFAULT_EVALUATION_WORKERS}"
-                )
-                return self.DEFAULT_EVALUATION_WORKERS
-
-            logger.debug(f"Loaded evaluation_workers: {evaluation_workers}")
-            return evaluation_workers
-
-        except Exception as e:
-            logger.warning(
-                f"Failed to load evaluation_workers: {e}, "
-                f"using default: {self.DEFAULT_EVALUATION_WORKERS}"
-            )
-            return self.DEFAULT_EVALUATION_WORKERS

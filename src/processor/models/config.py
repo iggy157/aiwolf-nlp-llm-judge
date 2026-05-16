@@ -38,6 +38,9 @@ class ProcessingConfig:
     use_batch_api: bool = False
     batch_poll_interval_seconds: float = 60.0
     batch_max_wait_seconds: float = 86400.0
+    evaluation_workers: int = 8
+    max_retries: int = 3
+    enable_caching: bool = True
 
     @staticmethod
     def from_config_dict(config: dict[str, Any]) -> "ProcessingConfig":
@@ -67,6 +70,14 @@ class ProcessingConfig:
             batch_max_wait_seconds = float(
                 processing_config.get("batch_max_wait_seconds", 86400.0)
             )
+            evaluation_workers_raw = processing_config.get("evaluation_workers", 8)
+            evaluation_workers = (
+                evaluation_workers_raw
+                if isinstance(evaluation_workers_raw, int) and evaluation_workers_raw > 0
+                else 8
+            )
+            max_retries = int(processing_config.get("max_retries", 3))
+            enable_caching = bool(processing_config.get("enable_caching", True))
 
             game_format_str = config.get("game", {}).get("format", "self_match")
             try:
@@ -92,6 +103,9 @@ class ProcessingConfig:
                 use_batch_api=use_batch_api,
                 batch_poll_interval_seconds=batch_poll_interval_seconds,
                 batch_max_wait_seconds=batch_max_wait_seconds,
+                evaluation_workers=evaluation_workers,
+                max_retries=max_retries,
+                enable_caching=enable_caching,
             )
 
         except KeyError as e:
@@ -157,4 +171,7 @@ class ProcessingConfig:
             use_batch_api=self.use_batch_api,
             batch_poll_interval_seconds=self.batch_poll_interval_seconds,
             batch_max_wait_seconds=self.batch_max_wait_seconds,
+            evaluation_workers=self.evaluation_workers,
+            max_retries=self.max_retries,
+            enable_caching=self.enable_caching,
         )

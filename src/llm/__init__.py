@@ -10,6 +10,7 @@ from src.llm.factory import (
     supported_providers,
 )
 from src.llm.formatter import GameLogFormatter
+from src.llm.prompt_loader import load_prompt_templates
 
 __all__ = [
     "BatchClient",
@@ -23,6 +24,7 @@ __all__ = [
     "GameLogFormatter",
     "build_batch_client",
     "build_client",
+    "load_prompt_templates",
     "model_config_from_dict",
     "supported_providers",
 ]

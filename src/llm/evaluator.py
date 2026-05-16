@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from src.evaluation.models import EvaluationCriteria
 from src.llm.client import CacheHandle, LLMClient, ModelConfig, PromptTemplates
 from src.llm.factory import build_client
+from src.llm.prompt_loader import load_prompt_templates
 
 
 class Evaluator:
@@ -25,6 +25,7 @@ class Evaluator:
         config: dict[str, Any],
         model_config: ModelConfig,
         client: LLMClient | None = None,
+        templates: PromptTemplates | None = None,
     ) -> None:
         """初期化.
 
@@ -33,40 +34,21 @@ class Evaluator:
             model_config: 使用するモデルの設定
             client: 既に構築済みの LLMClient（テスト用）。
                     None の場合は factory で生成する。
+            templates: 既にロード済みの PromptTemplates。
+                    None の場合は config から読み込む。
         """
-        try:
-            env_path = Path(config["path"]["env"])
-            prompt_yml_path = Path(config["llm"]["prompt_yml"])
-        except KeyError as e:
-            raise KeyError(f"必要な設定キーが見つかりません: {e}")
+        env_path_str = config.get("path", {}).get("env")
+        if env_path_str:
+            env_path = Path(env_path_str)
+            if env_path.is_file():
+                load_dotenv(env_path)
 
-        if env_path.is_file():
-            load_dotenv(env_path)
-
-        if not prompt_yml_path.is_file():
-            raise FileNotFoundError(
-                f"プロンプトYAMLファイルが見つかりません: {prompt_yml_path}"
-            )
-
-        try:
-            with open(prompt_yml_path, "r", encoding="utf-8") as f:
-                prompt_data = yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            raise ValueError(f"プロンプトYAMLファイルの解析に失敗しました: {e}")
-
-        # prompts.yaml では旧来 "developer" キーをシステムプロンプトに使っているため、
-        # それを system テンプレートとして扱う。
-        system_template = prompt_data.get("developer") or prompt_data.get("system")
-        user_template = prompt_data.get("user")
-        if not system_template or not user_template:
-            raise ValueError(
-                "prompts.yaml には 'developer'（または 'system'）と 'user' の両方が必要です"
-            )
-
-        self._templates = PromptTemplates(system=system_template, user=user_template)
+        self._templates = templates if templates is not None else load_prompt_templates(
+            config
+        )
         self.model_config = model_config
-        self._client: LLMClient = client if client is not None else build_client(
-            model_config
+        self._client: LLMClient = (
+            client if client is not None else build_client(model_config)
         )
 
     def evaluation(

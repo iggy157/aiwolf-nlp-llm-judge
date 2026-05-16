@@ -18,10 +18,10 @@ from pydantic import BaseModel
 
 from src.llm.batch import BatchClient, BatchRequest, BatchResult
 from src.llm.client import ModelConfig, PromptTemplates
+from src.llm.prompt_renderer import render_system, split_user_prompt
 from src.llm.providers.anthropic_client import (
     DEFAULT_MAX_TOKENS,
     EVALUATION_TOOL_NAME,
-    AnthropicClient,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,9 +82,7 @@ class AnthropicBatchClient(BatchClient):
         templates: PromptTemplates,
         output_structure: type[BaseModel],
     ) -> list[dict]:
-        from jinja2 import Template
-
-        system_text = Template(templates.system).render().strip()
+        system_text = render_system(templates)
         schema = output_structure.model_json_schema()
         tool = {
             "name": EVALUATION_TOOL_NAME,
@@ -95,8 +93,8 @@ class AnthropicBatchClient(BatchClient):
 
         params_list: list[dict] = []
         for req in requests:
-            prefix_text, varying_text = AnthropicClient._split_user_prompt(
-                templates.user,
+            prefix_text, varying_text = split_user_prompt(
+                templates,
                 req.character_info,
                 req.criteria_description,
                 req.log_json,

@@ -160,6 +160,33 @@ class EvaluationResult(list[CriteriaEvaluationResult]):
             for criteria_result in self
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "EvaluationResult":
+        """辞書形式の評価結果を EvaluationResult に復元.
+
+        ``data`` は次の形式を受け入れる:
+          - ``{"evaluations": {criteria_name: {"rankings": [...]}}}`` (ファイル形式)
+          - ``{criteria_name: {"rankings": [...]}}`` (並列処理戻り値の形)
+        """
+        evaluations_data = data.get("evaluations", data)
+
+        evaluation_result = cls()
+        for criteria_name, criteria_data in evaluations_data.items():
+            elements = [
+                EvaluationResultElement(
+                    player_name=ranking_data["player_name"],
+                    reasoning=ranking_data["reasoning"],
+                    ranking=ranking_data["ranking"],
+                    team=ranking_data["team"],
+                )
+                for ranking_data in criteria_data.get("rankings", [])
+            ]
+            criteria_result = CriteriaEvaluationResult(
+                criteria_name=criteria_name, elements=elements
+            )
+            evaluation_result.append(criteria_result)
+        return evaluation_result
+
 
 # 型エイリアス定義
 TeamResultsDict: TypeAlias = dict[str, dict[str, list[EvaluationResultElement]]]

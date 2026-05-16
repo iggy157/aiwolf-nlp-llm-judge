@@ -12,6 +12,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from src.llm.client import CacheHandle, ModelConfig, PromptTemplates
+from src.llm.prompt_renderer import render_system, render_user
 
 
 class OpenAICompatibleClient:
@@ -71,17 +72,9 @@ class OpenAICompatibleClient:
         cache_handle: CacheHandle | None = None,
     ) -> BaseModel:
         """評価を実行して構造化レスポンスを返す."""
-        from jinja2 import Template
-
-        system_text = Template(templates.system).render().strip()
-        user_text = (
-            Template(templates.user)
-            .render(
-                character_info=character_info,
-                criteria_description=criteria_description,
-                log=log_json,
-            )
-            .strip()
+        system_text = render_system(templates)
+        user_text = render_user(
+            templates, character_info, criteria_description, log_json
         )
 
         messages = [

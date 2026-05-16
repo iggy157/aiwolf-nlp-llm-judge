@@ -17,6 +17,7 @@ from anthropic import Anthropic
 from pydantic import BaseModel
 
 from src.llm.client import CacheHandle, ModelConfig, PromptTemplates
+from src.llm.prompt_renderer import render_system, split_user_prompt
 
 
 EVALUATION_TOOL_NAME = "submit_evaluation"
@@ -61,14 +62,12 @@ class AnthropicClient:
         cache_handle: CacheHandle | None = None,
     ) -> BaseModel:
         """Claude を tool_use で呼び出して構造化レスポンスを返す."""
-        from jinja2 import Template
-
-        system_text = Template(templates.system).render().strip()
+        system_text = render_system(templates)
 
         # user 側プロンプトを「キャッシュ対象（character_info まで）」と
         # 「キャッシュ対象外（criteria + log）」に分割。
-        prefix_text, varying_text = self._split_user_prompt(
-            templates.user, character_info, criteria_description, log_json
+        prefix_text, varying_text = split_user_prompt(
+            templates, character_info, criteria_description, log_json
         )
 
         # system はリスト形式で渡し、最後のブロックに cache_control を付ける。
@@ -118,33 +117,3 @@ class AnthropicClient:
             f"{self.model_config.id}: no tool_use block named "
             f"'{EVALUATION_TOOL_NAME}' in Claude response"
         )
-
-    @staticmethod
-    def _split_user_prompt(
-        user_template: str,
-        character_info: str,
-        criteria_description: str,
-        log_json: str,
-    ) -> tuple[str, str]:
-        """ユーザープロンプトをキャッシュ可能 prefix と可変部に分割.
-
-        prompts.yaml の user テンプレートは
-        「説明文 + character_info + criteria_description + log」の順で並んでいる前提。
-        criteria_description より前を prefix とする。
-        """
-        from jinja2 import Template
-
-        # 1) 可変部だけ空にして prefix を取り出す
-        prefix_template = Template(user_template)
-        prefix_text = prefix_template.render(
-            character_info=character_info,
-            criteria_description="",
-            log="",
-        ).rstrip()
-
-        # 2) 可変部
-        varying_text = (
-            f"## 評価基準\n\n{criteria_description}\n\n"
-            f"## 評価対象のログ\n\n{log_json}"
-        )
-        return prefix_text, varying_text

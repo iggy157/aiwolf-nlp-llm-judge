@@ -5,13 +5,13 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from src.evaluation.models.config import EvaluationConfig
 from src.evaluation.models.criteria import EvaluationCriteria
 from src.evaluation.models.llm_response import EvaluationLLMResponse
 from src.evaluation.models.result import EvaluationResult, CriteriaEvaluationResult
 from src.game.models import GameInfo
 from src.llm.client import ModelConfig
 from src.llm.evaluator import Evaluator
+from src.processor.models.config import ProcessingConfig
 from src.processor.models.exceptions import EvaluationExecutionError
 
 logger = logging.getLogger(__name__)
@@ -29,24 +29,21 @@ class EvaluationExecutionService:
         self,
         config: dict[str, Any],
         model_config: ModelConfig,
-        max_evaluation_threads: int = 8,
+        processing_config: ProcessingConfig,
     ) -> None:
         """初期化
 
         Args:
-            config: アプリケーション設定辞書
+            config: アプリケーション設定辞書（Evaluator が path.env / llm.prompt_yml を読むため必要）
             model_config: 使用するLLMモデルの設定
-            max_evaluation_threads: 評価用最大スレッド数
+            processing_config: 型付き処理設定（max_retries / enable_caching / evaluation_workers）
         """
         self.config = config
         self.model_config = model_config
-        self.max_evaluation_threads = max_evaluation_threads
-        # 設定からmax_retriesを読み取り（デフォルトは3）
-        self.max_retries = config.get("processing", {}).get("max_retries", 3)
-        # キャッシュは provider 側で各々挙動するが、ここでスイッチ可能にしておく
-        self.enable_caching = bool(
-            config.get("processing", {}).get("enable_caching", True)
-        )
+        self.processing_config = processing_config
+        self.max_evaluation_threads = processing_config.evaluation_workers
+        self.max_retries = processing_config.max_retries
+        self.enable_caching = processing_config.enable_caching
 
     @staticmethod
     def _extract_player_names_from_character_info(character_info: str) -> set[str]:
@@ -72,8 +69,8 @@ class EvaluationExecutionService:
 
     def execute_evaluations(
         self,
-        evaluation_config: EvaluationConfig,
         game_info: GameInfo,
+        criteria_for_game: list[EvaluationCriteria],
         formatted_data: list[dict[str, Any]],
         character_info: str,
         agent_to_team_mapping: dict[str, str],
@@ -81,8 +78,8 @@ class EvaluationExecutionService:
         """評価を並列実行
 
         Args:
-            evaluation_config: 評価設定
-            game_info: ゲーム情報
+            game_info: ゲーム情報（プレイヤー数等のメタ）
+            criteria_for_game: このゲームに適用される評価基準（呼出側で絞り込み済み）
             formatted_data: フォーマット済みログデータ
             character_info: キャラクター情報
             agent_to_team_mapping: エージェント名→チーム名のマッピング
@@ -93,8 +90,6 @@ class EvaluationExecutionService:
         Raises:
             EvaluationExecutionError: 評価実行に失敗した場合
         """
-        criteria_for_game = evaluation_config.get_criteria_for_game(game_info)
-
         if not criteria_for_game:
             logger.warning(
                 f"No evaluation criteria found for game "
