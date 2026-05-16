@@ -89,6 +89,29 @@ class OpenAIBatchClient(BatchClient):
 
         completed = self._poll_until_done(batch.id, poll_interval_seconds, max_wait_seconds)
 
+        # batch.status は completed / failed / expired / cancelled のいずれか
+        if completed.status in ("failed", "expired", "cancelled"):
+            # output_file_id がない場合でも、せめて1件の失敗を返してユーザに通知する
+            terminal_error = (
+                f"batch ended with status={completed.status}"
+                + (f": {completed.errors}" if getattr(completed, "errors", None) else "")
+            )
+            logger.error(f"[{self.model_config.id}] {terminal_error}")
+            # 該当ジョブで output_file_id があれば部分回収を試みる
+            results: list[BatchResult] = []
+            if completed.output_file_id:
+                results.extend(
+                    self._parse_output(completed.output_file_id, output_structure)
+                )
+            if completed.error_file_id:
+                results.extend(self._parse_errors(completed.error_file_id))
+            if not results:
+                # 全件失敗扱い（custom_id は不明なので入力件数分のフェイクは出さない）
+                results.append(
+                    BatchResult(custom_id="*", success=False, error=terminal_error)
+                )
+            return results
+
         results: list[BatchResult] = []
         if completed.output_file_id:
             results.extend(
@@ -161,11 +184,32 @@ class OpenAIBatchClient(BatchClient):
                 )
             time.sleep(poll_interval)
 
+    # 1ファイルあたり最大 100MB まで読み込む（通常のバッチ結果は十分に収まる）。
+    MAX_FILE_BYTES = 100 * 1024 * 1024
+
+    def _safe_read_file(self, file_id: str) -> str:
+        """Files API の content をサイズ上限付きで安全に読み込む."""
+        content = self._client.files.content(file_id)
+        if hasattr(content, "read"):
+            try:
+                data = content.read(self.MAX_FILE_BYTES)
+            except TypeError:
+                # 古い openai SDK では .read() が引数を取らない
+                data = content.read()
+            if isinstance(data, bytes):
+                if len(data) >= self.MAX_FILE_BYTES:
+                    logger.warning(
+                        f"[{self.model_config.id}] file {file_id} truncated at "
+                        f"{self.MAX_FILE_BYTES} bytes"
+                    )
+                return data.decode("utf-8", errors="replace")
+            return str(data)
+        return str(content)
+
     def _parse_output(
         self, output_file_id: str, output_structure: type[BaseModel]
     ) -> list[BatchResult]:
-        content = self._client.files.content(output_file_id)
-        text = content.read().decode("utf-8") if hasattr(content, "read") else str(content)
+        text = self._safe_read_file(output_file_id)
 
         results: list[BatchResult] = []
         for line in text.splitlines():
@@ -197,8 +241,7 @@ class OpenAIBatchClient(BatchClient):
         return results
 
     def _parse_errors(self, error_file_id: str) -> list[BatchResult]:
-        content = self._client.files.content(error_file_id)
-        text = content.read().decode("utf-8") if hasattr(content, "read") else str(content)
+        text = self._safe_read_file(error_file_id)
         results: list[BatchResult] = []
         for line in text.splitlines():
             if not line.strip():

@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from src.aiwolf_log.game_log import AIWolfGameLog
 from src.llm.client import ModelConfig
 
@@ -18,6 +20,26 @@ logger = logging.getLogger(__name__)
 
 RUN_DIR_TS_FORMAT = "%Y-%m-%d_%H-%M-%S"
 RUN_METADATA_FILENAME = "run_metadata.json"
+
+
+class RunMetadata(BaseModel):
+    """run_metadata.json のスキーマ.
+
+    書き込み時はこのモデル経由でシリアライズし、読み込み時は parse で検証する。
+    フィールド追加は後方互換のため Optional もしくはデフォルト値付きで行うこと。
+    """
+
+    run_timestamp: str
+    input_dir: str
+    game_count: int
+    game_ids: list[str] = Field(default_factory=list)
+    models: list[dict[str, Any]] = Field(default_factory=list)
+    eligible_models: list[str] = Field(default_factory=list)
+    executed_models: list[str] = Field(default_factory=list)
+    parallel_models: bool = False
+    dry_run: bool = True
+    dry_run_strict: bool = False
+    use_batch_api: bool = False
 
 
 class RunDirectory:
@@ -69,22 +91,27 @@ class RunDirectory:
         use_batch_api: bool = False,
     ) -> None:
         """run_metadata.json を書き出す."""
-        metadata = {
-            "run_timestamp": self.timestamp,
-            "input_dir": str(input_dir),
-            "game_count": len(game_logs),
-            "game_ids": [gl.game_id for gl in game_logs],
-            "models": [asdict(m) for m in configured_models],
-            "eligible_models": [m.id for m in eligible_models],
-            "executed_models": executed_model_ids,
-            "parallel_models": parallel_models,
-            "dry_run": dry_run,
-            "dry_run_strict": dry_run_strict,
-            "use_batch_api": use_batch_api,
-        }
+        metadata = RunMetadata(
+            run_timestamp=self.timestamp,
+            input_dir=str(input_dir),
+            game_count=len(game_logs),
+            game_ids=[gl.game_id for gl in game_logs],
+            models=[asdict(m) for m in configured_models],
+            eligible_models=[m.id for m in eligible_models],
+            executed_models=list(executed_model_ids),
+            parallel_models=parallel_models,
+            dry_run=dry_run,
+            dry_run_strict=dry_run_strict,
+            use_batch_api=use_batch_api,
+        )
         metadata_path = self.path / RUN_METADATA_FILENAME
         with metadata_path.open("w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+            json.dump(
+                metadata.model_dump(mode="json"),
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
         logger.info(f"Run metadata saved: {metadata_path}")
 
     def iter_model_dirs(self) -> list[Path]:
@@ -98,14 +125,18 @@ class RunDirectory:
         return str(self.path)
 
 
-def load_metadata(run_dir: Path) -> dict[str, Any] | None:
-    """run_metadata.json を読み込む（存在しない場合は None）."""
+def load_metadata(run_dir: Path) -> RunMetadata | None:
+    """run_metadata.json を読み込んで RunMetadata に検証付きで復元.
+
+    存在しない / パース失敗 / スキーマ不一致 のいずれかなら None。
+    """
     metadata_path = run_dir / RUN_METADATA_FILENAME
     if not metadata_path.is_file():
         return None
     try:
         with metadata_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+            data = json.load(f)
+        return RunMetadata.model_validate(data)
+    except Exception as e:
         logger.warning(f"Failed to load {metadata_path}: {e}")
         return None

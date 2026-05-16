@@ -2,7 +2,9 @@
 
 import logging
 import re
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from typing import Any
 
 from src.evaluation.models.criteria import EvaluationCriteria
@@ -101,35 +103,66 @@ class EvaluationExecutionService:
         logger.info(f"Starting evaluation for {len(criteria_for_game)} criteria")
 
         evaluator = Evaluator(self.config, self.model_config)
-        # open_cache を try の外で呼ぶと、ここで例外が出た場合に close_cache が
-        # 呼ばれないリスクがある。try の内側で呼ぶことで cache_handle が
-        # 部分的に作られたケースでも finally で確実に解放される。
-        cache_handle = None
-        try:
-            if self.enable_caching:
-                try:
-                    cache_handle = evaluator.open_cache(character_info)
-                    if cache_handle is not None:
-                        logger.debug(
-                            f"[{self.model_config.id}] opened cache: "
-                            f"{cache_handle.resource_name}"
-                        )
-                except Exception as e:
-                    # キャッシュ作成失敗は致命的ではない。no-cache で続行。
-                    logger.warning(
-                        f"[{self.model_config.id}] open_cache failed, "
-                        f"falling back to no-cache mode: {e}"
-                    )
-                    cache_handle = None
 
-            evaluation_result = EvaluationResult()
-
-            max_workers = min(len(criteria_for_game), self.max_evaluation_threads)
-
-            valid_player_names = self._extract_player_names_from_character_info(
-                character_info
+        with self._cache_scope(evaluator, character_info) as cache_handle:
+            return self._run_criteria_in_parallel(
+                criteria_for_game=criteria_for_game,
+                game_info=game_info,
+                formatted_data=formatted_data,
+                character_info=character_info,
+                agent_to_team_mapping=agent_to_team_mapping,
+                evaluator=evaluator,
+                cache_handle=cache_handle,
             )
 
+    @contextmanager
+    def _cache_scope(
+        self, evaluator: Evaluator, character_info: str
+    ) -> Iterator:
+        """ゲーム単位の prefix キャッシュを open/close で囲うコンテキスト.
+
+        - caching 無効、または open_cache が例外/None を返した場合は yield None
+        - 例外伝播時も close_cache は確実に呼ばれる
+        """
+        cache_handle = None
+        if self.enable_caching:
+            try:
+                cache_handle = evaluator.open_cache(character_info)
+                if cache_handle is not None:
+                    logger.debug(
+                        f"[{self.model_config.id}] opened cache: "
+                        f"{cache_handle.resource_name}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.model_config.id}] open_cache failed, "
+                    f"falling back to no-cache mode: {e}"
+                )
+                cache_handle = None
+        try:
+            yield cache_handle
+        finally:
+            evaluator.close_cache(cache_handle)
+
+    def _run_criteria_in_parallel(
+        self,
+        *,
+        criteria_for_game: list[EvaluationCriteria],
+        game_info: GameInfo,
+        formatted_data: list[dict[str, Any]],
+        character_info: str,
+        agent_to_team_mapping: dict[str, str],
+        evaluator: Evaluator,
+        cache_handle,
+    ) -> EvaluationResult:
+        """ThreadPool で評価基準を並列実行し、結果を集約する."""
+        evaluation_result = EvaluationResult()
+        max_workers = min(len(criteria_for_game), self.max_evaluation_threads)
+        valid_player_names = self._extract_player_names_from_character_info(
+            character_info
+        )
+
+        try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_criteria = {
                     executor.submit(
@@ -163,12 +196,10 @@ class EvaluationExecutionService:
             logger.info(f"Completed all {len(criteria_for_game)} evaluations")
             return evaluation_result
 
+        except EvaluationExecutionError:
+            raise
         except Exception as e:
-            if isinstance(e, EvaluationExecutionError):
-                raise
             raise EvaluationExecutionError(f"Failed to execute evaluations: {e}") from e
-        finally:
-            evaluator.close_cache(cache_handle)
 
     @staticmethod
     def _evaluate_criterion(

@@ -164,41 +164,69 @@ class AnthropicBatchClient(BatchClient):
                     BatchResult(custom_id=custom_id, success=False, error="no result")
                 )
                 continue
+
             result_type = getattr(result, "type", None)
-            if result_type != "succeeded":
-                error_obj = getattr(result, "error", None) or result_type
+            if result_type == "succeeded":
                 results.append(
-                    BatchResult(custom_id=custom_id, success=False, error=str(error_obj))
+                    self._parse_succeeded(custom_id, result, output_structure)
                 )
-                continue
-            message = getattr(result, "message", None)
-            if message is None:
+            elif result_type == "errored":
+                error_obj = getattr(result, "error", None)
+                error_type = (
+                    getattr(error_obj, "type", "unknown")
+                    if error_obj is not None
+                    else "unknown"
+                )
+                error_msg = (
+                    getattr(error_obj, "message", str(error_obj))
+                    if error_obj is not None
+                    else "unknown error"
+                )
                 results.append(
                     BatchResult(
                         custom_id=custom_id,
                         success=False,
-                        error="succeeded but no message",
+                        error=f"API error [{error_type}]: {error_msg}",
                     )
                 )
-                continue
-            try:
-                parsed = None
-                for block in message.content:
-                    if (
-                        getattr(block, "type", None) == "tool_use"
-                        and block.name == EVALUATION_TOOL_NAME
-                    ):
-                        parsed = output_structure.model_validate(block.input)
-                        break
-                if parsed is None:
-                    raise ValueError(
-                        f"no tool_use block named '{EVALUATION_TOOL_NAME}'"
+            elif result_type in ("expired", "canceled"):
+                results.append(
+                    BatchResult(
+                        custom_id=custom_id,
+                        success=False,
+                        error=f"request {result_type}",
                     )
-                results.append(
-                    BatchResult(custom_id=custom_id, success=True, response=parsed)
                 )
-            except Exception as e:
+            else:
                 results.append(
-                    BatchResult(custom_id=custom_id, success=False, error=str(e))
+                    BatchResult(
+                        custom_id=custom_id,
+                        success=False,
+                        error=f"unknown result type: {result_type!r}",
+                    )
                 )
         return results
+
+    def _parse_succeeded(
+        self, custom_id: str, result, output_structure: type[BaseModel]
+    ) -> BatchResult:
+        message = getattr(result, "message", None)
+        if message is None:
+            return BatchResult(
+                custom_id=custom_id,
+                success=False,
+                error="succeeded but no message",
+            )
+        try:
+            for block in message.content:
+                if (
+                    getattr(block, "type", None) == "tool_use"
+                    and block.name == EVALUATION_TOOL_NAME
+                ):
+                    parsed = output_structure.model_validate(block.input)
+                    return BatchResult(
+                        custom_id=custom_id, success=True, response=parsed
+                    )
+            raise ValueError(f"no tool_use block named '{EVALUATION_TOOL_NAME}'")
+        except Exception as e:
+            return BatchResult(custom_id=custom_id, success=False, error=str(e))

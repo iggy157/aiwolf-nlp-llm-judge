@@ -46,11 +46,12 @@ class AnthropicClient:
     def open_cache(
         self, character_info: str, templates: PromptTemplates
     ) -> CacheHandle | None:
-        """Anthropic は cache_control を毎回付与するだけなので明示ハンドルは不要."""
+        """Anthropic は cache_control を毎回付与するだけなので明示ハンドル不要."""
         return None
 
     def close_cache(self, handle: CacheHandle) -> None:
-        return None
+        """Anthropic は close 不要."""
+        return
 
     def evaluate(
         self,

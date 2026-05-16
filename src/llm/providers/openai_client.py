@@ -55,12 +55,12 @@ class OpenAICompatibleClient:
     def open_cache(
         self, character_info: str, templates: PromptTemplates
     ) -> CacheHandle | None:
-        """OpenAI / OpenAI互換ローカルサーバは自動キャッシュ（明示制御不要）."""
+        """OpenAI / OpenAI互換ローカルサーバは自動キャッシュなので何もしない."""
         return None
 
     def close_cache(self, handle: CacheHandle) -> None:
-        """OpenAI / OpenAI互換は何もしない."""
-        return None
+        """OpenAI / OpenAI互換は close 不要."""
+        return
 
     def evaluate(
         self,

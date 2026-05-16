@@ -1,5 +1,11 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from src.evaluation.models.criteria import EvaluationCriteria
-from src.game.models import GameInfo
+
+if TYPE_CHECKING:
+    from src.game.models import GameInfo
 
 
 class EvaluationConfig(list[EvaluationCriteria]):

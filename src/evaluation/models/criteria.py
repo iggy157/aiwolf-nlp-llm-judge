@@ -1,7 +1,14 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from src.game.models import GameInfo
+if TYPE_CHECKING:
+    # 循環インポート回避: GameInfo は型注釈でしか参照しない（実行時は不要）。
+    # src.game.detector -> src.evaluation.loaders -> src.evaluation.models と
+    # チェーンが繋がるため、ここで直接 import するとループする。
+    from src.game.models import GameInfo
 
 
 class RankingType(Enum):
