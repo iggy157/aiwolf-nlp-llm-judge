@@ -106,10 +106,28 @@ class GeminiClient:
         try:
             self._client.caches.delete(name=handle.resource_name)
         except Exception as e:
-            logger.warning(
-                f"[{self.model_config.id}] Failed to delete cached content "
-                f"{handle.resource_name}: {e}"
+            # PERMISSION_DENIED / QUOTA_EXCEEDED / 認証エラーは「気付くべき」事案。
+            # transient なエラー（NOT_FOUND: TTLで既に消えた等）は warning にとどめる。
+            msg = str(e)
+            severe = any(
+                token in msg
+                for token in (
+                    "PERMISSION_DENIED",
+                    "UNAUTHENTICATED",
+                    "QUOTA",
+                    "RESOURCE_EXHAUSTED",
+                )
             )
+            if severe:
+                logger.error(
+                    f"[{self.model_config.id}] Failed to delete cached content "
+                    f"{handle.resource_name} (severe): {e}"
+                )
+            else:
+                logger.warning(
+                    f"[{self.model_config.id}] Failed to delete cached content "
+                    f"{handle.resource_name}: {e}"
+                )
 
     def evaluate(
         self,

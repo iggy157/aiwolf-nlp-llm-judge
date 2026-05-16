@@ -98,28 +98,36 @@ class GeminiBatchClient(BatchClient):
             request_dicts.append(entry)
             custom_ids.append(req.custom_id)
 
-        if self._is_vertex:
-            src, dest = self._stage_to_gcs(request_dicts)
-            batch_job = self._client.batches.create(
-                model=self.model_config.model,
-                src=src,
-                config=types.CreateBatchJobConfig(dest=dest),
-            )
-        else:
-            # AI Studio: inline_requests を直接渡せる
-            batch_job = self._client.batches.create(
-                model=self.model_config.model,
-                src=request_dicts,
+        # Vertex AI 経路は GCS に input/output を置くため、終わったら必ず削除する
+        gcs_artifacts: dict[str, str] | None = None
+        try:
+            if self._is_vertex:
+                src, dest, gcs_artifacts = self._stage_to_gcs(request_dicts)
+                batch_job = self._client.batches.create(
+                    model=self.model_config.model,
+                    src=src,
+                    config=types.CreateBatchJobConfig(dest=dest),
+                )
+            else:
+                # AI Studio: inline_requests を直接渡せる
+                batch_job = self._client.batches.create(
+                    model=self.model_config.model,
+                    src=request_dicts,
+                )
+
+            job_name = batch_job.name
+            logger.info(
+                f"[{self.model_config.id}] batch created: name={job_name}, "
+                f"state={getattr(batch_job, 'state', None)}"
             )
 
-        job_name = batch_job.name
-        logger.info(
-            f"[{self.model_config.id}] batch created: name={job_name}, "
-            f"state={getattr(batch_job, 'state', None)}"
-        )
-
-        completed = self._poll_until_done(job_name, poll_interval_seconds, max_wait_seconds)
-        return self._collect_results(completed, custom_ids, output_structure)
+            completed = self._poll_until_done(
+                job_name, poll_interval_seconds, max_wait_seconds
+            )
+            return self._collect_results(completed, custom_ids, output_structure)
+        finally:
+            if gcs_artifacts is not None:
+                self._cleanup_gcs_artifacts(gcs_artifacts)
 
     # ------------------------------------------------------------------
     # Request building
@@ -157,10 +165,15 @@ class GeminiBatchClient(BatchClient):
     # Vertex AI: stage JSONL to GCS
     # ------------------------------------------------------------------
 
-    def _stage_to_gcs(self, request_dicts: list[dict]) -> tuple[str, types.BatchJobDestination]:
-        """JSONL を GCS に置いて (src_uri, dest_config) を返す."""
+    def _stage_to_gcs(
+        self, request_dicts: list[dict]
+    ) -> tuple[str, types.BatchJobDestination, dict[str, str]]:
+        """JSONL を GCS に置いて (src_uri, dest_config, cleanup_info) を返す.
+
+        cleanup_info は submit_and_wait の finally でクリーンアップに渡される。
+        """
         try:
-            from google.cloud import storage
+            from google.cloud import storage  # noqa: F401  # for ImportError check
         except ImportError as e:
             raise RuntimeError(
                 "google-cloud-storage is required for Vertex AI batch mode. "
@@ -189,7 +202,9 @@ class GeminiBatchClient(BatchClient):
             else f"{self.model_config.id}/{run_id}/output/"
         )
 
-        client = storage.Client(project=self.model_config.project_id)
+        from google.cloud import storage as gcs_storage
+
+        client = gcs_storage.Client(project=self.model_config.project_id)
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(input_blob_name)
         jsonl_payload = "\n".join(
@@ -201,7 +216,72 @@ class GeminiBatchClient(BatchClient):
         dest_uri = f"gs://{bucket_name}/{output_prefix_name}"
         logger.info(f"[{self.model_config.id}] uploaded batch input to {src_uri}")
 
-        return src_uri, types.BatchJobDestination(format="jsonl", gcs_uri=dest_uri)
+        return (
+            src_uri,
+            types.BatchJobDestination(format="jsonl", gcs_uri=dest_uri),
+            {
+                "bucket_name": bucket_name,
+                "input_blob_name": input_blob_name,
+                "output_prefix": output_prefix_name,
+            },
+        )
+
+    def _cleanup_gcs_artifacts(self, artifacts: dict[str, str]) -> None:
+        """バッチで使った GCS 入力 blob と出力 prefix を削除.
+
+        失敗しても処理は継続（ログのみ）。ユーザーがリージョン/権限を絞っている場合に
+        備えてベストエフォート。
+        """
+        try:
+            from google.cloud import storage
+        except ImportError:
+            return
+
+        bucket_name = artifacts.get("bucket_name")
+        if not bucket_name:
+            return
+
+        try:
+            client = storage.Client(project=self.model_config.project_id)
+            bucket = client.bucket(bucket_name)
+        except Exception as e:
+            logger.warning(
+                f"[{self.model_config.id}] GCS cleanup skipped (client init failed): {e}"
+            )
+            return
+
+        # 入力 blob の削除
+        input_blob_name = artifacts.get("input_blob_name")
+        if input_blob_name:
+            try:
+                bucket.blob(input_blob_name).delete()
+                logger.info(
+                    f"[{self.model_config.id}] cleaned up GCS input "
+                    f"gs://{bucket_name}/{input_blob_name}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.model_config.id}] failed to delete input blob "
+                    f"{input_blob_name}: {e}"
+                )
+
+        # 出力 prefix 配下の全 blob 削除
+        output_prefix = artifacts.get("output_prefix")
+        if output_prefix:
+            try:
+                deleted = 0
+                for blob in bucket.list_blobs(prefix=output_prefix):
+                    blob.delete()
+                    deleted += 1
+                logger.info(
+                    f"[{self.model_config.id}] cleaned up {deleted} output blob(s) "
+                    f"under gs://{bucket_name}/{output_prefix}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.model_config.id}] failed to clean output prefix "
+                    f"{output_prefix}: {e}"
+                )
 
     # ------------------------------------------------------------------
     # Polling

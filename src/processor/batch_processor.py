@@ -2,6 +2,7 @@
 
 import json
 import logging
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime
@@ -278,6 +279,9 @@ class BatchProcessor:
                 ok=False,
                 message="process() returned failure",
             )
+        except ConfigurationError:
+            # 設定ミスは握りつぶさず即時伝播（dry_run_strict と無関係に致命的）
+            raise
         except Exception as e:
             return _DryRunOutcome(model_config.id, ok=False, message=str(e))
 
@@ -325,6 +329,9 @@ class BatchProcessor:
                 m = future_to_model[future]
                 try:
                     results[m.id] = future.result()
+                except ConfigurationError:
+                    # 設定ミスは伝播。pending な他モデルもキャンセル相当として扱う。
+                    raise
                 except Exception as e:
                     logger.error(f"Model '{m.id}' run crashed: {e}", exc_info=True)
                     results[m.id] = ProcessingResult(
@@ -375,6 +382,8 @@ class BatchProcessor:
         result = ProcessingResult(total=len(game_logs))
         try:
             orch = BatchOrchestrator(self.config, model_config)
+        except ConfigurationError:
+            raise
         except Exception as e:
             logger.error(
                 f"[{model_config.id}] failed to construct BatchOrchestrator: {e}",
@@ -417,8 +426,12 @@ class BatchProcessor:
     ) -> ProcessingResult:
         result = ProcessingResult(total=len(game_logs))
 
+        # 'spawn' を明示することで、parallel_models=True 時に ThreadPool 内から
+        # この ProcessPool が起動される場合の fork() 起因のデッドロックを避ける。
+        # 単独実行時もインポート再評価のコスト以外は安全側に倒れる。
         with ProcessPoolExecutor(
-            max_workers=self.processing_config.max_workers
+            max_workers=self.processing_config.max_workers,
+            mp_context=mp.get_context("spawn"),
         ) as executor:
             futures = [
                 (

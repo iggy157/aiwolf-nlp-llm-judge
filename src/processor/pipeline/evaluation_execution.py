@@ -106,16 +106,27 @@ class EvaluationExecutionService:
         logger.info(f"Starting evaluation for {len(criteria_for_game)} criteria")
 
         evaluator = Evaluator(self.config, self.model_config)
+        # open_cache を try の外で呼ぶと、ここで例外が出た場合に close_cache が
+        # 呼ばれないリスクがある。try の内側で呼ぶことで cache_handle が
+        # 部分的に作られたケースでも finally で確実に解放される。
         cache_handle = None
-        if self.enable_caching:
-            cache_handle = evaluator.open_cache(character_info)
-            if cache_handle is not None:
-                logger.debug(
-                    f"[{self.model_config.id}] opened cache: "
-                    f"{cache_handle.resource_name}"
-                )
-
         try:
+            if self.enable_caching:
+                try:
+                    cache_handle = evaluator.open_cache(character_info)
+                    if cache_handle is not None:
+                        logger.debug(
+                            f"[{self.model_config.id}] opened cache: "
+                            f"{cache_handle.resource_name}"
+                        )
+                except Exception as e:
+                    # キャッシュ作成失敗は致命的ではない。no-cache で続行。
+                    logger.warning(
+                        f"[{self.model_config.id}] open_cache failed, "
+                        f"falling back to no-cache mode: {e}"
+                    )
+                    cache_handle = None
+
             evaluation_result = EvaluationResult()
 
             max_workers = min(len(criteria_for_game), self.max_evaluation_threads)
