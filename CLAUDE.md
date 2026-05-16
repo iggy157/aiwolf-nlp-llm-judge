@@ -14,21 +14,43 @@ AIWolfゲームログを生成AI（LLM）で評価するシステム
 - **モジュラー・モノリス**: 機能別モジュール分離と明確な境界
 - **並列処理**: マルチレベル並列化（プロセス・スレッドベース）
 - **設定駆動**: 柔軟なYAMLベース設定システム
-- **LLM統合**: OpenAI GPT-4oとの構造化出力検証
+- **マルチプロバイダLLM統合**: OpenAI / Anthropic Claude / Google Gemini / Vertex AI / OpenAI互換ローカル推論サーバ（vLLM, Ollama, llama.cpp, LM Studio）
+- **複数モデル同時評価**: 1回の実行で複数LLMを評価し、モデル別に出力ディレクトリを分離
+- **試運転（dry-run）**: 本実行前に1ゲーム×全評価基準で各モデルの疎通確認
+- **Prompt Caching**: system + character_info の prefix を1ゲーム単位でキャッシュ。OpenAI自動 / Anthropic `cache_control` / Gemini・Vertex `CachedContent` を自動で使い分け
+- **Batch API モード**: 本実行をプロバイダのBatch API（OpenAI / Anthropic / Gemini / Vertex AI）に投入。24h SLA、50%引。ローカルは自動で同期パスにフォールバック
 - **バリデーション**: 自動再試行機能付きLLMレスポンス検証
 
 ## 使用方法
 
 ### 基本実行
 ```bash
-# 設定ファイル指定での実行
+# 設定ファイル指定での実行（settings.yaml で定義された全モデルを順に評価）
 uv run python main.py -c config/settings.yaml
 
 # デバッグモードでの実行
 uv run python main.py -c config/settings.yaml --debug
 
-# 集計再生成モードでの実行（既存の評価結果JSONから集計のみ再生成）
+# 実行するモデルを絞り込み（カンマ区切り）
+uv run python main.py -c config/settings.yaml --models gpt-4o,claude-sonnet-4-5
+
+# 試運転をスキップして直接本実行
+uv run python main.py -c config/settings.yaml --skip-dry-run
+
+# 試運転のみ実行（疎通確認用、結果は保存されない）
+uv run python main.py -c config/settings.yaml --dry-run-only
+
+# Batch APIを使う本実行（24h SLA、50%引、コスト重視時）
+uv run python main.py -c config/settings.yaml --use-batch
+
+# settings.yamlでuse_batch_api: trueでも同期実行を強制したい場合
+uv run python main.py -c config/settings.yaml --no-batch
+
+# 集計再生成（最新の実行ディレクトリを対象に）
 uv run python main.py -c config/settings.yaml --regenerate-aggregation
+
+# 集計再生成（特定の実行ディレクトリを指定）
+uv run python main.py -c config/settings.yaml --regenerate-aggregation --run-dir data/output/2026-05-16_14-32-00
 ```
 
 ### データファイル配置
@@ -37,22 +59,32 @@ data/
 ├── input/
 │   ├── log/                   # ゲームログファイル (*.log)
 │   └── json/                  # キャラクター情報ファイル (*.json)
-└── output/                    # 評価結果の出力先
+└── output/                    # 出力ルート。実行毎にタイムスタンプディレクトリが作られる
+    └── 2026-05-16_14-32-00/   # 実行タイムスタンプ
+        ├── run_metadata.json   # 実行設定スナップショット
+        ├── gpt-4o/             # モデル別ディレクトリ（llm.models[].id がそのまま使われる）
+        │   ├── {game_id}_result.json
+        │   ├── team_aggregation.json
+        │   └── team_aggregation.csv
+        └── claude-sonnet-4-5/
+            └── ...
 ```
 
 **重要**: ログファイル（*.log）とJSONファイル（*.json）は、拡張子前の名前が完全一致している必要があります。
 
+### 試運転（dry-run）
+
+`processing.dry_run: true`（デフォルト）の場合、本実行前に各モデルに対して 1 ゲーム × 全評価基準で疎通確認を行います。
+
+- 結果は**保存されません**（メモリ上で破棄）
+- 試運転で失敗したモデルは：
+  - `processing.dry_run_strict: false`（デフォルト）→ そのモデルだけスキップして本実行を続行
+  - `processing.dry_run_strict: true` → 全体を中断
+- `--skip-dry-run` で試運転自体を省略
+- `--dry-run-only` で試運転だけ実行し、本実行はしない（APIキーやエンドポイントの疎通確認用）
+
 ### 集計再生成モード
-既存の個別評価結果ファイル（`*_result.json`）から、チーム集計ファイル（`team_aggregation.json`と`team_aggregation.csv`）のみを再生成する機能です。
-
-```bash
-# 使用例：誤って削除したチーム集計ファイルの復元
-uv run python main.py -c config/settings.yaml --regenerate-aggregation
-```
-
-**動作の違い**:
-- **通常モード**: ゲームログを評価 → メモリ上で結果を保持 → 個別結果JSONとチーム集計を同時に生成
-- **集計再生成モード**: 既存の個別結果JSONを読み込み → チーム集計のみを再生成
+既存の個別評価結果ファイル（`*_result.json`）から、チーム集計ファイル（`team_aggregation.json`と`team_aggregation.csv`）のみを再生成する機能です。`--run-dir` で対象のタイムスタンプディレクトリを指定すると、その配下の各モデルディレクトリで集計を再生成します。指定がない場合は `output_root` 直下で最新のタイムスタンプディレクトリが使われます。
 
 **使用場面**:
 - チーム集計ファイルを誤って削除した場合の復元
@@ -60,7 +92,7 @@ uv run python main.py -c config/settings.yaml --regenerate-aggregation
 - 個別評価は完了しているが集計のみやり直したい場合
 
 **注意事項**:
-- `processing.output_dir`に個別評価結果（`*_result.json`）が存在する必要があります
+- 対象の `<output_root>/<timestamp>/<model_id>/` 配下に個別評価結果（`*_result.json`）が存在する必要があります
 - ゲームログの再評価は行わないため、LLM APIを呼び出しません（コスト削減）
 
 ## 設定管理
@@ -73,19 +105,97 @@ path:
 
 llm:
   prompt_yml: config/prompts.yaml
-  model: "gpt-4o"
+  models:
+    - id: gpt-4o                    # 出力ディレクトリ名にもなる任意の識別子
+      provider: openai
+      model: gpt-4o
+      api_key_env: OPENAI_API_KEY
+      system_role: developer        # o-seriesは "developer"、他は "system"
+    - id: claude-sonnet-4-5
+      provider: anthropic
+      model: claude-sonnet-4-5
+      api_key_env: ANTHROPIC_API_KEY
+      extra: { max_tokens: 8192 }
+    - id: gemini-2-5-pro
+      provider: gemini
+      model: gemini-2.5-pro
+      api_key_env: GEMINI_API_KEY
+    - id: gemini-vertex
+      provider: vertex_ai
+      model: gemini-2.5-pro
+      project_id: your-gcp-project
+      location: us-central1
+      # 認証は GOOGLE_APPLICATION_CREDENTIALS をシェル環境変数で設定
+    - id: qwen3-8b-vllm             # ローカル推論サーバ（vLLM, Ollama等）
+      provider: openai_compatible
+      model: Qwen/Qwen3-8B-Instruct
+      base_url: http://localhost:8000/v1
+      api_key_env: VLLM_API_KEY     # ダミー値でも可
 
 game:
   format: "main_match"        # main_match または self_match
   # プレイヤー数や人狼の人数はログファイルから自動検出されるため指定不要
 
 processing:
-  input_dir: "data/input"     # 入力ディレクトリ
-  output_dir: "data/output"   # 出力ディレクトリ
-  max_workers: 4              # プロセス並列処理数
-  evaluation_workers: 8       # スレッド並列処理数（評価基準並列処理）
+  input_dir: "data/input"
+  output_dir: "data/output"   # ルート。実行毎に <output_dir>/<timestamp>/<model_id>/ が作られる
+  max_workers: 4              # プロセス並列処理数（ゲーム間並列）
+  evaluation_workers: 8       # スレッド並列処理数（評価基準並列）
   max_retries: 5              # LLMバリデーション失敗時の最大再試行回数
+  parallel_models: false      # true で複数モデルを同時並行実行（API/VRAM負荷に注意）
+  dry_run: true               # true で本実行前に試運転を実施
+  dry_run_strict: false       # true で試運転失敗時に全体中断、false で失敗モデルをスキップ
 ```
+
+### サポートプロバイダ
+
+| provider           | 用途                              | 必要な認証                                              |
+|--------------------|-----------------------------------|---------------------------------------------------------|
+| `openai`           | OpenAI公式（gpt-4o等）            | `api_key_env`（例: `OPENAI_API_KEY`）                   |
+| `openai_compatible`| vLLM/Ollama/llama.cpp/LM Studio   | `base_url` + `api_key_env`（ダミー値可）                |
+| `anthropic`        | Claude                            | `api_key_env`（例: `ANTHROPIC_API_KEY`）                |
+| `gemini`           | Google AI Studio API              | `api_key_env`（例: `GEMINI_API_KEY`）                   |
+| `vertex_ai`        | Vertex AI 上の Gemini             | `project_id` + `location` + `GOOGLE_APPLICATION_CREDENTIALS`（環境変数） |
+
+**Vertex AI の認証**: サービスアカウントJSONへのパスをシェル設定ファイル（`~/.bashrc` / `~/.zshrc`）に書き、`export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.private_keys/key.json"` のようにシェル環境変数として設定してください。本プロジェクト側で再読み込みは行いません。
+
+### 構造化出力のしくみ
+
+各プロバイダで最適な方法を使い分け、Pydanticモデル（`EvaluationLLMResponse`）への変換まで自動で行います。
+
+- `openai`: `client.beta.chat.completions.parse(response_format=...)` でPydantic直結
+- `openai_compatible`: `response_format={"type":"json_schema", ...}` を指定
+- `anthropic`: `tool_use` を強制ツール選択で実行し、入力をPydanticに復元
+- `gemini` / `vertex_ai`: `response_mime_type=application/json` + `response_schema=PydanticModel`
+
+### Prompt Caching（コスト削減）
+
+1ゲーム内では全評価基準で `system プロンプト + character_info` が共通であることを利用し、prefix をプロバイダ機能でキャッシュします。
+
+- `openai` / `openai_compatible`: 自動（コード変更不要、1024+ tokens prefix が 5–10 分キャッシュされ50%引）
+- `anthropic`: `cache_control: {type: ephemeral}` マーカーを system + character_info に付与（読み込み時はベース価格の10%）
+- `gemini` / `vertex_ai`: ゲーム開始時に `client.caches.create()` で `CachedContent` リソース作成、各評価基準呼び出しで `cached_content` を参照、ゲーム終了時に削除（キャッシュ部分はベース価格の25%、TTLは `cache_ttl_seconds` で制御、デフォルト3600秒）
+
+`processing.enable_caching: false` で無効化可能（既定: true）。キャッシュ閾値を下回るゲームの場合、Geminiは自動的にno-cacheにフォールバックします。
+
+### Batch API モード
+
+`processing.use_batch_api: true` または `--use-batch` で本実行をBatch APIに切り替え。プロバイダ別フロー:
+
+| プロバイダ | 入力 | 出力 | SLA | 割引 |
+|---|---|---|---|---|
+| OpenAI | JSONL（Files APIにアップロード） | JSONL（output_file_id） | 24h | 50% |
+| Anthropic | リクエストリスト（直接送信） | ストリーミング取得 | 24h | 50% |
+| Gemini (AI Studio) | inline リクエスト | inline レスポンス | 24h | 50% |
+| Vertex AI | GCS の JSONL ファイル | GCS の JSONL ファイル | 数時間〜 | 50% |
+| openai_compatible（ローカル） | - | - | - | 同期パスに自動フォールバック |
+
+**Vertex AI Batch を使う場合**: モデル設定に `gcs_bucket: gs://your-bucket/aiwolf-judge/` を必須で指定してください。バケットは事前に作成しておくこと。`google-cloud-storage` SDK は本プロジェクトの依存ではないので、Vertex Batchを使うなら `uv add google-cloud-storage` を別途実行してください。
+
+**Batch API の注意点**:
+- 試運転（dry-run）は常に同期で実施（バッチで疎通確認すると24h待ち＋無駄な課金になるため）
+- 完了待ちは `batch_max_wait_seconds`（既定86400秒）、ポーリングは `batch_poll_interval_seconds`（既定60秒）
+- Caching と Batch の併用: OpenAI（自動キャッシュ）と Anthropic（cache_control はバッチでも有効）はそのまま効く。Gemini/Vertex のバッチでは現実装はキャッシュリソースを併用しません
 
 ### 評価基準定義（`config/evaluation_criteria.yaml`）
 

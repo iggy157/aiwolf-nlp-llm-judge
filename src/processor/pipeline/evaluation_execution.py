@@ -10,6 +10,7 @@ from src.evaluation.models.criteria import EvaluationCriteria
 from src.evaluation.models.llm_response import EvaluationLLMResponse
 from src.evaluation.models.result import EvaluationResult, CriteriaEvaluationResult
 from src.game.models import GameInfo
+from src.llm.client import ModelConfig
 from src.llm.evaluator import Evaluator
 from src.processor.models.exceptions import EvaluationExecutionError
 
@@ -24,17 +25,28 @@ class EvaluationExecutionService:
     - 単一評価基準の実行
     """
 
-    def __init__(self, config: dict[str, Any], max_evaluation_threads: int = 8) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        model_config: ModelConfig,
+        max_evaluation_threads: int = 8,
+    ) -> None:
         """初期化
 
         Args:
             config: アプリケーション設定辞書
+            model_config: 使用するLLMモデルの設定
             max_evaluation_threads: 評価用最大スレッド数
         """
         self.config = config
+        self.model_config = model_config
         self.max_evaluation_threads = max_evaluation_threads
         # 設定からmax_retriesを読み取り（デフォルトは3）
         self.max_retries = config.get("processing", {}).get("max_retries", 3)
+        # キャッシュは provider 側で各々挙動するが、ここでスイッチ可能にしておく
+        self.enable_caching = bool(
+            config.get("processing", {}).get("enable_caching", True)
+        )
 
     @staticmethod
     def _extract_player_names_from_character_info(character_info: str) -> set[str]:
@@ -93,20 +105,26 @@ class EvaluationExecutionService:
 
         logger.info(f"Starting evaluation for {len(criteria_for_game)} criteria")
 
+        evaluator = Evaluator(self.config, self.model_config)
+        cache_handle = None
+        if self.enable_caching:
+            cache_handle = evaluator.open_cache(character_info)
+            if cache_handle is not None:
+                logger.debug(
+                    f"[{self.model_config.id}] opened cache: "
+                    f"{cache_handle.resource_name}"
+                )
+
         try:
-            evaluator = Evaluator(self.config)
             evaluation_result = EvaluationResult()
 
-            # ThreadPoolExecutorを使用した並列評価
             max_workers = min(len(criteria_for_game), self.max_evaluation_threads)
 
-            # プレイヤー名を抽出
             valid_player_names = self._extract_player_names_from_character_info(
                 character_info
             )
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # タスク投入
                 future_to_criteria = {
                     executor.submit(
                         self._evaluate_criterion,
@@ -117,16 +135,15 @@ class EvaluationExecutionService:
                         game_info.player_count,
                         valid_player_names,
                         self.max_retries,
+                        cache_handle,
                     ): criteria
                     for criteria in criteria_for_game
                 }
 
-                # 結果収集
                 for future in as_completed(future_to_criteria):
                     criteria = future_to_criteria[future]
                     try:
                         criteria_name, llm_response = future.result()
-                        # CriteriaEvaluationResultを作成してリストに追加
                         criteria_result = CriteriaEvaluationResult.from_llm_response(
                             criteria_name, llm_response, agent_to_team_mapping
                         )
@@ -144,6 +161,8 @@ class EvaluationExecutionService:
             if isinstance(e, EvaluationExecutionError):
                 raise
             raise EvaluationExecutionError(f"Failed to execute evaluations: {e}") from e
+        finally:
+            evaluator.close_cache(cache_handle)
 
     @staticmethod
     def _evaluate_criterion(
@@ -154,6 +173,7 @@ class EvaluationExecutionService:
         player_count: int,
         valid_player_names: set[str],
         max_retries: int,
+        cache_handle=None,
     ) -> tuple[str, EvaluationLLMResponse]:
         """単一評価基準の評価を実行（バリデーション付きで再試行）
 
@@ -182,6 +202,7 @@ class EvaluationExecutionService:
                     log=formatted_data,
                     output_structure=EvaluationLLMResponse,
                     character_info=character_info,
+                    cache_handle=cache_handle,
                 )
 
                 # バリデーション付きで再作成

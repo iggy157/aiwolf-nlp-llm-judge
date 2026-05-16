@@ -1,35 +1,47 @@
-import os
-from typing import Any
-from dotenv import load_dotenv
-from pathlib import Path
-from jinja2 import Template
-import json
+"""モデル別の評価リクエストを管理する Evaluator."""
 
-from openai import OpenAI
-from openai.types.chat import (
-    ChatCompletionDeveloperMessageParam,
-    ChatCompletionUserMessageParam,
-)
+import json
+from pathlib import Path
+from typing import Any
+
+import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from src.evaluation.models import EvaluationCriteria
-
-import yaml
+from src.llm.client import CacheHandle, LLMClient, ModelConfig, PromptTemplates
+from src.llm.factory import build_client
 
 
 class Evaluator:
-    """評価クラス."""
+    """LLMClient に評価リクエストを委譲する薄いラッパ.
 
-    def __init__(self, config: dict[str, Any]):
+    プロンプトテンプレートの読み込みと、評価基準/ログを文字列に整形して
+    LLMClient.evaluate に渡す責務だけを持つ。
+    """
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        model_config: ModelConfig,
+        client: LLMClient | None = None,
+    ) -> None:
+        """初期化.
+
+        Args:
+            config: アプリケーション設定辞書（path.env, llm.prompt_yml を読む）
+            model_config: 使用するモデルの設定
+            client: 既に構築済みの LLMClient（テスト用）。
+                    None の場合は factory で生成する。
+        """
         try:
             env_path = Path(config["path"]["env"])
             prompt_yml_path = Path(config["llm"]["prompt_yml"])
-            self.model = config["llm"]["model"]
         except KeyError as e:
             raise KeyError(f"必要な設定キーが見つかりません: {e}")
 
-        if not env_path.is_file():
-            raise FileNotFoundError(f"環境変数ファイルが見つかりません: {env_path}")
+        if env_path.is_file():
+            load_dotenv(env_path)
 
         if not prompt_yml_path.is_file():
             raise FileNotFoundError(
@@ -38,17 +50,24 @@ class Evaluator:
 
         try:
             with open(prompt_yml_path, "r", encoding="utf-8") as f:
-                self.prompt_template = yaml.safe_load(f)
+                prompt_data = yaml.safe_load(f)
         except yaml.YAMLError as e:
             raise ValueError(f"プロンプトYAMLファイルの解析に失敗しました: {e}")
 
-        load_dotenv(env_path)
-        api_key = os.environ.get("OPENAI_API_KEY")
+        # prompts.yaml では旧来 "developer" キーをシステムプロンプトに使っているため、
+        # それを system テンプレートとして扱う。
+        system_template = prompt_data.get("developer") or prompt_data.get("system")
+        user_template = prompt_data.get("user")
+        if not system_template or not user_template:
+            raise ValueError(
+                "prompts.yaml には 'developer'（または 'system'）と 'user' の両方が必要です"
+            )
 
-        if not api_key:
-            raise ValueError("OPENAI_API_KEYが設定されていません")
-
-        self.client = OpenAI(api_key=api_key)
+        self._templates = PromptTemplates(system=system_template, user=user_template)
+        self.model_config = model_config
+        self._client: LLMClient = client if client is not None else build_client(
+            model_config
+        )
 
     def evaluation(
         self,
@@ -56,53 +75,27 @@ class Evaluator:
         log: list[dict[str, Any]],
         output_structure: type[BaseModel],
         character_info: str = "",
+        cache_handle: CacheHandle | None = None,
     ) -> BaseModel:
-        response = self.client.beta.chat.completions.parse(
-            model=self.model,
-            messages=[
-                self._developer_message(),
-                self._user_message(
-                    criteria=criteria, log=log, character_info=character_info
-                ),
-            ],
-            response_format=output_structure,
+        """1評価基準に対するLLM呼び出し."""
+        return self._client.evaluate(
+            criteria_description=criteria.description,
+            character_info=character_info,
+            log_json=json.dumps(log, ensure_ascii=False),
+            templates=self._templates,
+            output_structure=output_structure,
+            cache_handle=cache_handle,
         )
 
-        return response.choices[0].message.parsed
+    @property
+    def templates(self) -> PromptTemplates:
+        return self._templates
 
-    def _developer_message(self) -> ChatCompletionDeveloperMessageParam:
-        template: Template = Template(self.prompt_template["developer"])
+    def open_cache(self, character_info: str) -> CacheHandle | None:
+        """ゲーム単位で prefix キャッシュを準備."""
+        return self._client.open_cache(character_info, self._templates)
 
-        # print(template.render().strip())
-
-        message: ChatCompletionDeveloperMessageParam = {
-            "content": template.render().strip(),
-            "role": "developer",
-        }
-        return message
-
-    def _user_message(
-        self,
-        criteria: EvaluationCriteria,
-        log: list[dict[str, Any]],
-        character_info: str = "",
-    ) -> ChatCompletionUserMessageParam:
-        template: Template = Template(self.prompt_template["user"])
-
-        # print(
-        #     template.render(
-        #         character_info=character_info,
-        #         criteria_description=criteria.description,
-        #         log=json.dumps(log, ensure_ascii=False),
-        #     ).strip()
-        # )
-
-        message: ChatCompletionUserMessageParam = {
-            "content": template.render(
-                character_info=character_info,
-                criteria_description=criteria.description,
-                log=json.dumps(log, ensure_ascii=False),
-            ).strip(),
-            "role": "user",
-        }
-        return message
+    def close_cache(self, handle: CacheHandle | None) -> None:
+        if handle is None:
+            return
+        self._client.close_cache(handle)

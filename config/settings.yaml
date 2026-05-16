@@ -7,7 +7,56 @@ path:
 # LLM設定
 llm:
   prompt_yml: config/prompts.yaml
-  model: "gpt-4o"
+
+  # 評価に使用するモデルの一覧。1つでも複数でも指定可能。
+  # CLI で --models <id>[,<id>,...] を渡すと、ここからフィルタして実行される。
+  #
+  # 共通フィールド:
+  #   id            必須・任意の識別子。出力ディレクトリ名にも使う（スラッシュ等は使わない）
+  #   provider      openai | openai_compatible | anthropic | gemini | vertex_ai
+  #   model         API/サーバに渡すモデル名
+  #   api_key_env   APIキーが入っている環境変数名（必要なプロバイダのみ）
+  #   base_url      OpenAI互換ローカル推論サーバのエンドポイント
+  #   project_id    Vertex AI のGCPプロジェクトID
+  #   location      Vertex AI のロケーション（例: us-central1）
+  #   system_role   OpenAI o-series は "developer"、他は "system"
+  #   request_timeout  リクエストタイムアウト（秒、デフォルト600）
+  #   extra         プロバイダ固有の追加パラメータ
+  #                   例: vLLMでの guided_decoding_backend、Claude の max_tokens
+  models:
+    - id: gpt-4o
+      provider: openai
+      model: gpt-4o
+      api_key_env: OPENAI_API_KEY
+      system_role: developer
+    # - id: claude-sonnet-4-5
+    #   provider: anthropic
+    #   model: claude-sonnet-4-5
+    #   api_key_env: ANTHROPIC_API_KEY
+    #   extra:
+    #     max_tokens: 8192
+    # - id: gemini-2-5-pro
+    #   provider: gemini
+    #   model: gemini-2.5-pro
+    #   api_key_env: GEMINI_API_KEY
+    # - id: gemini-vertex
+    #   provider: vertex_ai
+    #   model: gemini-2.5-pro
+    #   project_id: your-gcp-project
+    #   location: us-central1
+    #   gcs_bucket: gs://your-bucket/aiwolf-judge/  # Batch API利用時のみ必須
+    #   # 認証は GOOGLE_APPLICATION_CREDENTIALS（サービスアカウントJSONのパス）
+    #   # を shell の環境変数で設定してください。
+    # - id: qwen3-8b-vllm
+    #   provider: openai_compatible
+    #   model: Qwen/Qwen3-8B-Instruct
+    #   base_url: http://localhost:8000/v1
+    #   api_key_env: VLLM_API_KEY
+    # - id: gemma-light-ollama
+    #   provider: openai_compatible
+    #   model: gemma2:2b
+    #   base_url: http://localhost:11434/v1
+    #   api_key_env: OLLAMA_API_KEY
 
 # ゲーム形式設定
 # プレイヤー数や人狼の人数はログファイルから自動検出されるため指定不要
@@ -17,8 +66,20 @@ game:
 # 処理設定
 processing:
   input_dir: "data/input"    # 入力ディレクトリ
-  output_dir: "data/output"  # 出力ディレクトリ
+  output_dir: "data/output"  # 出力ディレクトリのルート。実行毎にタイムスタンプ配下にモデル別ディレクトリが作られる
   encoding: "utf-8"          # ファイルエンコーディング
-  max_workers: 4             # プロセス並列処理数（ゲーム間並列処理）
-  evaluation_workers: 8      # スレッド並列処理数（評価基準並列処理）
+  max_workers: 4             # プロセス並列処理数（ゲーム間並列処理、同期モード時）
+  evaluation_workers: 8      # スレッド並列処理数（評価基準並列処理、同期モード時）
   max_retries: 5             # LLMバリデーション失敗時の最大再試行回数
+  parallel_models: false     # true にすると複数モデルを同時並行で実行（API/VRAM負荷に注意）
+  dry_run: true              # true で本実行前に「試運転（1ゲーム × 全評価基準）」を実施
+  dry_run_strict: false      # true で試運転に1モデルでも失敗したら全体中断、false で失敗モデルをスキップ
+  enable_caching: true       # true で system+character_info の prefix キャッシュを有効化（Gemini/Vertex は明示cache、Anthropic は cache_control、OpenAI は自動）
+
+  # Batch API モード（24h SLA, 50% 割引）
+  # true にすると本実行をプロバイダのBatch APIで投入。試運転は同期で行われる。
+  # ローカル推論サーバ（openai_compatible）は自動的に同期パスにフォールバック。
+  # Vertex AI で batch を使う場合は、モデル設定に gcs_bucket を必ず指定すること。
+  use_batch_api: false
+  batch_poll_interval_seconds: 60    # バッチ状態のポーリング間隔
+  batch_max_wait_seconds: 86400      # バッチ完了待ちの最大時間（デフォルト24h）
