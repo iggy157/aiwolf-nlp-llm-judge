@@ -29,12 +29,22 @@ llm:
       model: gpt-4o
       api_key_env: OPENAI_API_KEY
       system_role: developer
-    # - id: claude-sonnet-4-5
-    #   provider: anthropic
-    #   model: claude-sonnet-4-5
-    #   api_key_env: ANTHROPIC_API_KEY
-    #   extra:
-    #     max_tokens: 8192
+    - id: gpt-5.4
+      provider: openai
+      model: gpt-5.4
+      api_key_env: OPENAI_API_KEY
+      system_role: developer
+    - id: claude-sonnet-4-5
+      provider: anthropic
+      model: claude-sonnet-4-5
+      api_key_env: ANTHROPIC_API_KEY
+      extra:
+        max_tokens: 8192
+    - id: gemini-2.5-pro
+      provider: vertex_ai
+      model: gemini-2.5-pro
+      project_id: uplifted-shine-478406-q7
+      location: us-central1
     # - id: gemini-2-5-pro
     #   provider: gemini
     #   model: gemini-2.5-pro
@@ -68,8 +78,8 @@ processing:
   input_dir: "data/input"    # 入力ディレクトリ
   output_dir: "data/output"  # 出力ディレクトリのルート。実行毎にタイムスタンプ配下にモデル別ディレクトリが作られる
   encoding: "utf-8"          # ファイルエンコーディング
-  max_workers: 4             # プロセス並列処理数（ゲーム間並列処理、同期モード時）
-  evaluation_workers: 8      # スレッド並列処理数（評価基準並列処理、同期モード時）
+  max_workers: 1             # プロセス並列処理数（ゲーム間並列処理、同期モード時）
+  evaluation_workers: 2      # スレッド並列処理数（評価基準並列処理、同期モード時）
   max_retries: 5             # LLMバリデーション失敗時の最大再試行回数
   parallel_models: false     # true にすると複数モデルを同時並行で実行（API/VRAM負荷に注意）
   dry_run: true              # true で本実行前に「試運転（1ゲーム × 全評価基準）」を実施
