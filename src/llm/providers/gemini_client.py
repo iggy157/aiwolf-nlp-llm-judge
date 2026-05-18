@@ -137,7 +137,11 @@ class GeminiClient:
         output_structure: type[BaseModel],
         cache_handle: CacheHandle | None = None,
     ) -> BaseModel:
-        """Gemini を response_schema 強制で呼び出して構造化レスポンスを返す."""
+        """Gemini を response_json_schema 強制で呼び出して構造化レスポンスを返す."""
+        # Pydantic v2 が生成する JSON Schema は $defs/$ref を含むため、
+        # OpenAPI サブセットの response_schema ではなく response_json_schema を使う。
+        response_json_schema = output_structure.model_json_schema()
+
         if cache_handle is not None and cache_handle.resource_name:
             # キャッシュ使用時は prefix を送らず criteria+log のみ送る
             user_text = (
@@ -146,7 +150,7 @@ class GeminiClient:
             )
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=output_structure,
+                response_json_schema=response_json_schema,
                 cached_content=cache_handle.resource_name,
             )
         else:
@@ -157,7 +161,7 @@ class GeminiClient:
             config = types.GenerateContentConfig(
                 system_instruction=system_text,
                 response_mime_type="application/json",
-                response_schema=output_structure,
+                response_json_schema=response_json_schema,
             )
 
         response = self._client.models.generate_content(

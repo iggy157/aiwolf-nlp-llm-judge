@@ -144,13 +144,16 @@ class GeminiBatchClient(BatchClient):
         user_text = render_user(
             templates, req.character_info, req.criteria_description, req.log_json
         )
+        # Pydantic v2 の JSON Schema は $defs/$ref を含むため、
+        # OpenAPI サブセットの response_schema では正しく扱えない。
+        # JSON Schema 方言を直接受ける response_json_schema を使う。
         schema = output_structure.model_json_schema()
         return {
             "contents": [{"role": "user", "parts": [{"text": user_text}]}],
             "system_instruction": {"parts": [{"text": system_text}]},
             "generation_config": {
                 "response_mime_type": "application/json",
-                "response_schema": schema,
+                "response_json_schema": schema,
             },
         }
 
