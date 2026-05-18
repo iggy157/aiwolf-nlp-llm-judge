@@ -25,6 +25,9 @@ class BatchRequest:
     criteria_description: str
     character_info: str
     log_json: str
+    # 評価基準名（PromptTemplates.criterion_prefaces のキー）。
+    # 指定された場合、user プロンプト先頭にその基準固有の前提テキストが挿入される。
+    criterion_name: str | None = None
 
 
 @dataclass

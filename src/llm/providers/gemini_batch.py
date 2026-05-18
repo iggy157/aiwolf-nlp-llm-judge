@@ -142,7 +142,11 @@ class GeminiBatchClient(BatchClient):
     ) -> dict:
         system_text = render_system(templates)
         user_text = render_user(
-            templates, req.character_info, req.criteria_description, req.log_json
+            templates,
+            req.character_info,
+            req.criteria_description,
+            req.log_json,
+            criterion_name=req.criterion_name,
         )
         # Pydantic v2 の JSON Schema は $defs/$ref を含むため、
         # OpenAPI サブセットの response_schema では正しく扱えない。

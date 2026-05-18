@@ -67,6 +67,7 @@ class Evaluator:
             templates=self._templates,
             output_structure=output_structure,
             cache_handle=cache_handle,
+            criterion_name=criteria.name,
         )
 
     @property

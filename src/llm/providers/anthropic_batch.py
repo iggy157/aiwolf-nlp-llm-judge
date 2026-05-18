@@ -98,6 +98,7 @@ class AnthropicBatchClient(BatchClient):
                 req.character_info,
                 req.criteria_description,
                 req.log_json,
+                criterion_name=req.criterion_name,
             )
             params_list.append(
                 {

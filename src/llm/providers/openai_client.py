@@ -70,11 +70,16 @@ class OpenAICompatibleClient:
         templates: PromptTemplates,
         output_structure: type[BaseModel],
         cache_handle: CacheHandle | None = None,
+        criterion_name: str | None = None,
     ) -> BaseModel:
         """評価を実行して構造化レスポンスを返す."""
         system_text = render_system(templates)
         user_text = render_user(
-            templates, character_info, criteria_description, log_json
+            templates,
+            character_info,
+            criteria_description,
+            log_json,
+            criterion_name=criterion_name,
         )
 
         messages = [

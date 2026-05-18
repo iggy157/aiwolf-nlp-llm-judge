@@ -136,18 +136,31 @@ class GeminiClient:
         templates: PromptTemplates,
         output_structure: type[BaseModel],
         cache_handle: CacheHandle | None = None,
+        criterion_name: str | None = None,
     ) -> BaseModel:
         """Gemini を response_json_schema 強制で呼び出して構造化レスポンスを返す."""
         # Pydantic v2 が生成する JSON Schema は $defs/$ref を含むため、
         # OpenAPI サブセットの response_schema ではなく response_json_schema を使う。
         response_json_schema = output_structure.model_json_schema()
 
+        # 基準別 preface（キャッシュ未使用時は user テンプレートで合成、
+        # キャッシュ使用時は varying テキストの先頭に手動挿入）。
+        preface = ""
+        if criterion_name:
+            preface = templates.criterion_prefaces.get(criterion_name, "").strip()
+
         if cache_handle is not None and cache_handle.resource_name:
-            # キャッシュ使用時は prefix を送らず criteria+log のみ送る
-            user_text = (
+            # キャッシュ使用時は prefix（system + character_info）を送らず、
+            # preface（基準固有）+ criteria + log のみ送る。
+            # preface は基準ごとに変わるためキャッシュ対象外。
+            varying_parts: list[str] = []
+            if preface:
+                varying_parts.append(preface)
+            varying_parts.append(
                 f"{EVALUATION_BLOCK_HEADER}\n\n{criteria_description}\n\n"
                 f"{LOG_BLOCK_HEADER}\n\n{log_json}"
             )
+            user_text = "\n\n".join(varying_parts)
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_json_schema=response_json_schema,
@@ -156,7 +169,11 @@ class GeminiClient:
         else:
             system_text = render_system(templates)
             user_text = render_user(
-                templates, character_info, criteria_description, log_json
+                templates,
+                character_info,
+                criteria_description,
+                log_json,
+                criterion_name=criterion_name,
             )
             config = types.GenerateContentConfig(
                 system_instruction=system_text,

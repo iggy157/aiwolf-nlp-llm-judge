@@ -143,7 +143,11 @@ class OpenAIBatchClient(BatchClient):
         lines: list[bytes] = []
         for req in requests:
             user_text = render_user(
-                templates, req.character_info, req.criteria_description, req.log_json
+                templates,
+                req.character_info,
+                req.criteria_description,
+                req.log_json,
+                criterion_name=req.criterion_name,
             )
             body = {
                 "model": self.model_config.model,

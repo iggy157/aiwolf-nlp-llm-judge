@@ -61,14 +61,22 @@ class AnthropicClient:
         templates: PromptTemplates,
         output_structure: type[BaseModel],
         cache_handle: CacheHandle | None = None,
+        criterion_name: str | None = None,
     ) -> BaseModel:
         """Claude を tool_use で呼び出して構造化レスポンスを返す."""
         system_text = render_system(templates)
 
-        # user 側プロンプトを「キャッシュ対象（character_info まで）」と
+        # user 側プロンプトを「キャッシュ対象（preface + character_info）」と
         # 「キャッシュ対象外（criteria + log）」に分割。
+        # preface は基準ごとに変わるため、同一ゲーム内の異なる基準呼び出しでは
+        # prefix が変わってキャッシュ衝突しないが、同一基準×複数ゲームでは
+        # character_info が違うのでいずれにせよ別キャッシュになる。
         prefix_text, varying_text = split_user_prompt(
-            templates, character_info, criteria_description, log_json
+            templates,
+            character_info,
+            criteria_description,
+            log_json,
+            criterion_name=criterion_name,
         )
 
         # system はリスト形式で渡し、最後のブロックに cache_control を付ける。

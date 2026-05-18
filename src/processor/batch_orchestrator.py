@@ -158,6 +158,7 @@ class BatchOrchestrator:
                         criteria_description=criteria.description,
                         character_info=ctx.character_info,
                         log_json=log_json,
+                        criterion_name=criteria.name,
                     )
                 )
         return requests

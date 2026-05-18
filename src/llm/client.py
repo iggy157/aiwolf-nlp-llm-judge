@@ -43,10 +43,17 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class PromptTemplates:
-    """プロンプトテンプレート（developer/system + user）."""
+    """プロンプトテンプレート（developer/system + user + 基準別 preface）.
 
-    system: str  # config/prompts.yaml の 'developer' キーの内容
+    Attributes:
+        system: config/prompts.yaml の 'developer' キーの内容
+        user: user テンプレート（Jinja2、`{{ criterion_preface }}` 変数を含みうる）
+        criterion_prefaces: 評価基準名 → user 先頭に挿入する前提テキスト
+    """
+
+    system: str
     user: str
+    criterion_prefaces: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -80,6 +87,7 @@ class LLMClient(Protocol):
         templates: PromptTemplates,
         output_structure: type[BaseModel],
         cache_handle: CacheHandle | None = None,
+        criterion_name: str | None = None,
     ) -> BaseModel:
         """評価リクエストを送り、構造化された結果を返す.
 
@@ -90,6 +98,8 @@ class LLMClient(Protocol):
             templates: プロンプトテンプレート
             output_structure: 期待する出力Pydanticモデルクラス
             cache_handle: open_cache で取得したキャッシュハンドル（プロバイダによっては無視）
+            criterion_name: 評価基準名（templates.criterion_prefaces のキー）。
+                指定された場合、user プロンプト先頭にその基準固有の前提テキストが挿入される。
 
         Returns:
             output_structure 型のインスタンス

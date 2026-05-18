@@ -48,4 +48,18 @@ def load_prompt_templates(config: dict[str, Any]) -> PromptTemplates:
             "prompts.yaml には 'developer'（または 'system'）と 'user' の両方が必要です"
         )
 
-    return PromptTemplates(system=system_template, user=user_template)
+    # 評価基準ごとの前提テキスト（任意）。未定義の基準を呼ぶと空文字フォールバック。
+    raw_prefaces = data.get("criterion_preface") or {}
+    if not isinstance(raw_prefaces, dict):
+        raise ValueError(
+            "prompts.yaml の 'criterion_preface' は基準名→テキストの辞書である必要があります"
+        )
+    criterion_prefaces = {
+        str(name): str(text).strip() for name, text in raw_prefaces.items() if text
+    }
+
+    return PromptTemplates(
+        system=system_template,
+        user=user_template,
+        criterion_prefaces=criterion_prefaces,
+    )
