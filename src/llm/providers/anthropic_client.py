@@ -105,15 +105,28 @@ class AnthropicClient:
         }
 
         max_tokens = int(self.model_config.extra.get("max_tokens", DEFAULT_MAX_TOKENS))
+        thinking_cfg = self.model_config.extra.get("thinking")
 
-        response = self._client.messages.create(
-            model=self.model_config.model,
-            max_tokens=max_tokens,
-            system=system_blocks,
-            messages=[{"role": "user", "content": user_content}],
-            tools=[tool],
-            tool_choice={"type": "tool", "name": EVALUATION_TOOL_NAME},
-        )
+        kwargs: dict = {
+            "model": self.model_config.model,
+            "max_tokens": max_tokens,
+            "system": system_blocks,
+            "messages": [{"role": "user", "content": user_content}],
+            "tools": [tool],
+        }
+        if thinking_cfg:
+            # extended thinking 有効時の制約:
+            # - tool_choice の "tool" / "any" 強制は使えない（auto のみ可）
+            # - temperature=1 必須
+            # - budget_tokens < max_tokens 必須
+            # 構造化出力は tool 定義 + 強い指示で tool_use を促す形にする。
+            kwargs["thinking"] = thinking_cfg
+            kwargs["temperature"] = 1.0
+            kwargs["tool_choice"] = {"type": "auto"}
+        else:
+            kwargs["tool_choice"] = {"type": "tool", "name": EVALUATION_TOOL_NAME}
+
+        response = self._client.messages.create(**kwargs)
 
         for block in response.content:
             if (

@@ -90,6 +90,7 @@ class AnthropicBatchClient(BatchClient):
             "input_schema": schema,
         }
         max_tokens = int(self.model_config.extra.get("max_tokens", DEFAULT_MAX_TOKENS))
+        thinking_cfg = self.model_config.extra.get("thinking")
 
         params_list: list[dict] = []
         for req in requests:
@@ -100,37 +101,41 @@ class AnthropicBatchClient(BatchClient):
                 req.log_json,
                 criterion_name=req.criterion_name,
             )
-            params_list.append(
-                {
-                    "custom_id": req.custom_id,
-                    "params": {
-                        "model": self.model_config.model,
-                        "max_tokens": max_tokens,
-                        "system": [
+            params: dict = {
+                "model": self.model_config.model,
+                "max_tokens": max_tokens,
+                "system": [
+                    {
+                        "type": "text",
+                        "text": system_text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
                             {
                                 "type": "text",
-                                "text": system_text,
+                                "text": prefix_text,
                                 "cache_control": {"type": "ephemeral"},
-                            }
+                            },
+                            {"type": "text", "text": varying_text},
                         ],
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": prefix_text,
-                                        "cache_control": {"type": "ephemeral"},
-                                    },
-                                    {"type": "text", "text": varying_text},
-                                ],
-                            }
-                        ],
-                        "tools": [tool],
-                        "tool_choice": {"type": "tool", "name": EVALUATION_TOOL_NAME},
-                    },
-                }
-            )
+                    }
+                ],
+                "tools": [tool],
+            }
+            if thinking_cfg:
+                # extended thinking 有効時の制約:
+                # - tool_choice 強制（tool/any）は使えない（auto のみ可）
+                # - temperature=1 必須
+                params["thinking"] = thinking_cfg
+                params["temperature"] = 1.0
+                params["tool_choice"] = {"type": "auto"}
+            else:
+                params["tool_choice"] = {"type": "tool", "name": EVALUATION_TOOL_NAME}
+            params_list.append({"custom_id": req.custom_id, "params": params})
         return params_list
 
     def _poll_until_ended(self, batch_id: str, poll_interval: float, max_wait: float):
