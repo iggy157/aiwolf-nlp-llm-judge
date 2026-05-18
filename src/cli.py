@@ -57,6 +57,18 @@ def main() -> None:
         action="store_true",
         help="settings.yamlで use_batch_api: true でも同期実行を強制",
     )
+    parser.add_argument(
+        "--parallel-models",
+        action="store_true",
+        help="複数モデルを同時並行で実行（settings.yamlのparallel_modelsより優先）。"
+        "closed系のクラウドAPIプロバイダ間ではレートリミットが独立なので安全だが、"
+        "ローカル推論サーバ（openai_compatible）を含む場合はVRAM競合に注意",
+    )
+    parser.add_argument(
+        "--no-parallel-models",
+        action="store_true",
+        help="settings.yamlで parallel_models: true でも逐次実行を強制",
+    )
 
     parser.add_argument(
         "--regenerate-aggregation",
@@ -97,6 +109,14 @@ def main() -> None:
         config.setdefault("processing", {})["use_batch_api"] = True
     if args.no_batch:
         config.setdefault("processing", {})["use_batch_api"] = False
+    if args.parallel_models and args.no_parallel_models:
+        raise ValueError(
+            "Cannot specify both --parallel-models and --no-parallel-models"
+        )
+    if args.parallel_models:
+        config.setdefault("processing", {})["parallel_models"] = True
+    if args.no_parallel_models:
+        config.setdefault("processing", {})["parallel_models"] = False
 
     model_ids_filter = _split_csv(args.models)
     processor = BatchProcessor(config, model_ids_filter=model_ids_filter)
