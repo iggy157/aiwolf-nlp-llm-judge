@@ -63,7 +63,12 @@ class GameContextBuilder:
         criteria = self.evaluation_config.get_criteria_for_game(game_info)
 
         formatter = GameLogFormatter(game_log, self.reader_config)
-        formatted_data = formatter.convert_to_jsonl(game_info.game_format)
+        # 評価バイアス対策: 勝敗(result アクション)はログから除外して LLM に見せない。
+        # 投票結果・占い結果・処刑などは翌日以降の議題になり得るため残す。
+        formatted_data = formatter.convert_to_jsonl(
+            game_info.game_format,
+            exclude_actions={"result"},
+        )
 
         character_info = self._build_character_info(game_log)
         agent_to_team_mapping = game_log.get_agent_to_team_mapping()
