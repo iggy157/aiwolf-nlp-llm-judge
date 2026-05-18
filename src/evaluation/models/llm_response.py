@@ -21,23 +21,55 @@ class EvaluationLLMResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_rankings_consistency(self) -> Self:
-        """ランキングの整合性を検証（空チェック含む）"""
+        """ランキングの整合性を検証.
+
+        競技ランキング(1224)方式:
+        - 最上位は必ず 1。
+        - 同順位（タイ）を許容。
+        - タイの分は次の順位を飛ばす。例: 1, 1, 1, 4, 5 は valid、1, 1, 1, 2, 3 は invalid。
+        - 全員同順位（区別を放棄した評価）は invalid。少なくとも2階位は必要。
+
+        同順位を許容する理由: 同質な reasoning が複数得られた場合、強制的に
+        1/2/3 と差別化することで生じる「相対効果アーティファクト」を防ぐ。
+        """
         # 空のランキングリストの検証
         if not self.rankings:
             raise ValueError("ランキングリストは空にできません")
 
-        # ランキング値の重複チェック
         ranking_values = [elem.ranking for elem in self.rankings]
-        if len(ranking_values) != len(set(ranking_values)):
-            raise ValueError("ランキング値に重複があります")
+        sorted_ranks = sorted(ranking_values)
+        n = len(sorted_ranks)
 
-        # ランキング値が連続した整数（1, 2, 3, ...）であることを検証
-        expected_rankings = set(range(1, len(self.rankings) + 1))
-        actual_rankings = set(ranking_values)
-        if actual_rankings != expected_rankings:
+        # 最上位は必ず 1（昇順ソートの先頭が 1 でなければ不整合）
+        if sorted_ranks[0] != 1:
             raise ValueError(
-                f"ランキングは1から{len(self.rankings)}までの連続した整数である必要があります。"
-                f"実際: {sorted(actual_rankings)}, 期待: {sorted(expected_rankings)}"
+                f"最上位の順位は1である必要があります。実際: {sorted_ranks[0]}"
+            )
+
+        # 競技ランキング方式の整合性:
+        # 各順位 r は「r より厳密に小さい値の数 + 1」と一致するべき。
+        # 例: [1,1,1,4,5] では 4 の前に 3 人いるので 3+1=4 で OK。
+        # [1,1,1,2,3] では 2 の前に 3 人いるので 3+1=4 が期待されるが 2 → invalid。
+        for r in sorted_ranks:
+            expected = sum(1 for x in sorted_ranks if x < r) + 1
+            if r != expected:
+                raise ValueError(
+                    f"順位 {r} は競技ランキング方式と整合しません（期待値: {expected}）。"
+                    f"同順位の分は次の順位を飛ばしてください（例: 1,1,1,4,5）。"
+                    f"実際の順位列: {sorted_ranks}"
+                )
+
+        # 全員同順位（評価放棄）は禁止
+        if len(set(ranking_values)) < 2 and n > 1:
+            raise ValueError(
+                "全員を同順位にすることはできません。少なくとも2つの異なる順位が必要です。"
+            )
+
+        # 順位値が N を超えないこと（上限チェック）
+        if max(sorted_ranks) > n:
+            raise ValueError(
+                f"順位は1から{n}までの範囲である必要があります。"
+                f"実際の最大値: {max(sorted_ranks)}"
             )
 
         return self
