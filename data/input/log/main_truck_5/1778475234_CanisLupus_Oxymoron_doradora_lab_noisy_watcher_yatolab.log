@@ -1,0 +1,54 @@
+0,status,1,WEREWOLF,ALIVE,Oxymoron1,ケンジ
+0,status,2,POSSESSED,ALIVE,CanisLupus1,セルヴァス
+0,status,3,SEER,ALIVE,noisy_watcher1,シュンイチ
+0,status,4,VILLAGER,ALIVE,yatolab1,リュウジ
+0,status,5,VILLAGER,ALIVE,doradora_lab1,トシオ
+0,talk,0,0,4,あっし、今夜も一杯でやす
+0,talk,1,0,2,僕はセルヴァス。詩とリンゴ、お酒が大好きな詩人さ。よろしく！
+0,talk,2,0,3,皆さんの意見を聞いていると、まだ決めかねています。
+0,talk,3,0,1,俺はケンジ！みんなよろしくな！明日はガッツリ議論して人狼見つけようぜ！
+0,talk,4,0,5,トシオ、素村COね。リュウジとセルヴァス、だいぶ砕けてるな… @シュンイチ はCOどんな方針でいく？
+0,talk,5,1,4,Over
+0,talk,6,1,2,Over
+0,talk,7,1,3,Over
+0,talk,8,1,1, @トシオ  素村COか！早っ！占い師の人とか、明日出てきてくれるかなー？
+0,talk,9,1,5,様子見。
+0,talk,10,2,1,明日から誰が怪しいか、みんなでじっくり話し合おうぜ！楽しみだな！
+0,talk,11,2,5,俺はトシオ、素村COだ。 @ケンジ 以外も今役職COあるなら一気に頼む。
+0,talk,12,3,1,俺も役職ないから素村だぜ！明日からみんなで協力して頑張ろうな！
+0,talk,13,3,5,この静けさちょっと不気味だな…。 @シュンイチ  @セルヴァス @リュウジ 今のうちに占い師ならCOしてくれ。
+0,divine,3,1,WEREWOLF
+1,status,1,WEREWOLF,ALIVE,Oxymoron1,ケンジ
+1,status,2,POSSESSED,ALIVE,CanisLupus1,セルヴァス
+1,status,3,SEER,ALIVE,noisy_watcher1,シュンイチ
+1,status,4,VILLAGER,ALIVE,yatolab1,リュウジ
+1,status,5,VILLAGER,ALIVE,doradora_lab1,トシオ
+1,talk,0,0,4,ひっく、あっしは村でやす。トシオさん、名乗り急かしが強引でやす
+1,talk,1,0,5,急かした自覚はあるが、情報欲しかっただけだよ。 @シュンイチ  @セルヴァス 役職スタンス明言してくれないか？
+1,talk,2,0,1,占い師、まだ誰も出ないのか？  @シュンイチ  @セルヴァス どうなんだよ！
+1,talk,3,0,2,僕は占い師さ。昨夜占った  @シュンイチ  は潔白な人間だったよ。
+1,talk,4,0,3,Over
+1,talk,5,1,4,ひっく、セルヴァスさん急かされ後の名乗り不自然だねぇ
+1,talk,6,1,5,セルヴァス真仮定だと狼候補ケンジかリュウジかな。 @リュウジ  その視点から他黒候補どこ見てる？
+1,talk,7,1,1, @トシオ  いきなり俺を候補に入れるなよ！ @リュウジ はどう思う？
+1,talk,8,1,2, @シュンイチ  は白。詩を詠むように心を整えていたんだよ。
+1,talk,9,2,4,ひっく、あっしはトシオさん候補絞り早すぎでやす。ケンジさん催促便乗だねぇ
+1,talk,10,2,5,候補絞りはセルヴァス真仮定の話だよ。 @リュウジ  占い真偽どのくらい見てる？
+1,talk,11,2,1, @リュウジ  俺のこと便乗とか言うなよ！ @トシオ 絞り早すぎるし、なんか怪しくないか？
+1,talk,12,2,2,えへっ、不自然かな？僕は @リュウジ に投票して風を待つよ。
+1,talk,13,3,4,ひっく、セルヴァスさん理由薄くあっし狙いは偽物だねぇ
+1,talk,14,3,5,セルヴァス真寄りで見る。今日は発言と流れで @ケンジ に入れる
+1,talk,15,3,1, @トシオ  根拠なく俺に入れるのはおかしいだろ！今日はトシオに票入れるわ！
+1,talk,16,3,2,えへっ、  @シュンイチ  君から見て、今の風向きはどうだい？
+1,vote,1,5
+1,vote,2,4
+1,vote,3,1
+1,vote,4,2
+1,vote,5,1
+1,execute,1,WEREWOLF
+2,status,1,WEREWOLF,DEAD,Oxymoron1,ケンジ
+2,status,2,POSSESSED,ALIVE,CanisLupus1,セルヴァス
+2,status,3,SEER,ALIVE,noisy_watcher1,シュンイチ
+2,status,4,VILLAGER,ALIVE,yatolab1,リュウジ
+2,status,5,VILLAGER,ALIVE,doradora_lab1,トシオ
+2,result,4,0,VILLAGER
